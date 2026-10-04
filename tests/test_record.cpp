@@ -8,6 +8,7 @@
 #include <iostream>
 #include "core/AudioEngine.h"
 #include "core/AudioTrack.h"
+#include "core/RecorderConfig.h"
 
 class RecorderTest : public QObject
 {
@@ -179,12 +180,82 @@ static int runMonitorTest()
     return ok ? 0 : 4;
 }
 
+// "config" mode: round-trip a RecorderConfig through save/load.
+static int runConfigTest()
+{
+    AudioEngine engine;
+    if (!engine.isInitialized()) {
+        std::cerr << "PortAudio not initialized" << std::endl;
+        return 1;
+    }
+
+    QString apiName, devName;
+    for (const auto &api : engine.audioApis()) {
+        if (!api.name.contains(QStringLiteral("MME"), Qt::CaseInsensitive))
+            continue;
+        auto devices = engine.audioDevices(api.apiIndex);
+        if (!devices.isEmpty()) {
+            apiName = api.name;
+            devName = devices.first().name;
+            break;
+        }
+    }
+    if (devName.isEmpty()) {
+        std::cout << "No MME input device; skipping config test." << std::endl;
+        return 0;
+    }
+
+    RecorderConfig cfg;
+    cfg.outputDir = QStringLiteral("D:/tmp/out");
+    cfg.mp3 = true;
+    cfg.combined = true;
+    for (int i = 0; i < 2; ++i) {
+        TrackConfig t;
+        t.name = QStringLiteral("TRACK_%1").arg(i + 1);
+        t.api = apiName;
+        t.device = devName;
+        t.firstChannel = 1 + i * 2;
+        t.stereo = (i == 0);
+        t.armed = (i != 1);
+        cfg.tracks.append(t);
+    }
+
+    QString path = QDir::temp().filePath(QStringLiteral("wr_cfg.wrrec.json"));
+    QString error;
+    if (!RecorderConfig::save(path, cfg, &error)) {
+        std::cerr << "save failed: " << error.toStdString() << std::endl;
+        return 2;
+    }
+    std::cout << "Saved: " << path.toStdString() << std::endl;
+
+    RecorderConfig loaded;
+    if (!RecorderConfig::load(path, &loaded, &error)) {
+        std::cerr << "load failed: " << error.toStdString() << std::endl;
+        QFile::remove(path);
+        return 3;
+    }
+
+    bool ok = loaded.outputDir == cfg.outputDir && loaded.mp3 == cfg.mp3 &&
+              loaded.combined == cfg.combined && loaded.tracks.size() == cfg.tracks.size();
+    for (int i = 0; ok && i < cfg.tracks.size(); ++i) {
+        const TrackConfig &a = cfg.tracks[i], &b = loaded.tracks[i];
+        ok = a.name == b.name && a.api == b.api && a.device == b.device &&
+             a.firstChannel == b.firstChannel && a.stereo == b.stereo && a.armed == b.armed;
+    }
+
+    QFile::remove(path);
+    std::cout << (ok ? "CONFIG TEST PASS" : "CONFIG TEST FAIL") << std::endl;
+    return ok ? 0 : 4;
+}
+
 int main(int argc, char *argv[])
 {
     QCoreApplication app(argc, argv);
 
     if (argc > 1 && QString::fromLocal8Bit(argv[1]) == QStringLiteral("monitor"))
         return runMonitorTest();
+    if (argc > 1 && QString::fromLocal8Bit(argv[1]) == QStringLiteral("config"))
+        return runConfigTest();
 
     int duration = 3000;
     QString apiFilter;

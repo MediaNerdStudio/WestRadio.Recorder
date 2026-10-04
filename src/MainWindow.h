@@ -4,6 +4,7 @@
 #include <QVector>
 #include <QDateTime>
 #include <memory>
+#include "core/RecorderConfig.h"
 
 class AudioEngine;
 class AudioTrack;
@@ -17,12 +18,13 @@ class QScrollArea;
 class QHBoxLayout;
 class QVBoxLayout;
 class QTimer;
+class QAction;
 
 class MainWindow : public QMainWindow
 {
     Q_OBJECT
 public:
-    explicit MainWindow(QWidget *parent = nullptr);
+    explicit MainWindow(QWidget *parent = nullptr, const QString &configPath = QString());
     ~MainWindow();
 
 private slots:
@@ -38,6 +40,11 @@ private slots:
     void onRecordingStopped();
     void onPostProcessMessage(const QString &message);
     void onPostProcessFinished();
+    void newConfig();
+    void openConfig();
+    void saveConfig();
+    void saveConfigAs();
+    void markDirty();
 
 protected:
     void closeEvent(QCloseEvent *event) override;
@@ -49,6 +56,13 @@ private:
     QString safeFileName(const QString &name) const;
     void renumberTracks();
     void updateTrackSummary();
+    void appendTrackWidget(AudioTrack *track);
+    void removeAllTracks();
+    RecorderConfig currentConfig() const;
+    void applyConfig(const RecorderConfig &config, QStringList *warnings);
+    bool saveConfigTo(const QString &path);
+    void updateTitle();
+    void updateStartupAction();
 
     AudioEngine *engine_;
     QVector<AudioTrack *> tracks_;
@@ -67,6 +81,10 @@ private:
     QLabel *elapsedLabel_;
     QLabel *trackSummaryLabel_;
 
+    QAction *newAction_;
+    QAction *openAction_;
+    QAction *startupAction_;
+
     QScrollArea *scrollArea_;
     QWidget *tracksContainer_;
     QHBoxLayout *tracksLayout_;
@@ -75,6 +93,9 @@ private:
     QTimer *elapsedTimer_;
     QTimer *monitorRefreshTimer_;
     QThread *postProcessThread_ = nullptr;
+
+    QString currentConfigPath_;
+    bool dirty_ = false;
     QDateTime recordStart_;
     bool recording_ = false;
     bool stopping_ = false;

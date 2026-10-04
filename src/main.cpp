@@ -5,6 +5,7 @@
 #include <QDateTime>
 #include <QTextStream>
 #include <QtGlobal>
+#include <QCommandLineParser>
 #include "MainWindow.h"
 
 static const char *kStyleSheet = R"(
@@ -112,6 +113,22 @@ QMenu::item:selected {
     background-color: #3d8bff;
     color: #ffffff;
 }
+QMenuBar {
+    background-color: #22262d;
+    color: #cfd3d9;
+    border-bottom: 1px solid #2e333b;
+}
+QMenuBar::item {
+    background: transparent;
+    padding: 4px 10px;
+}
+QMenuBar::item:selected {
+    background-color: #2e333b;
+}
+QMenuBar::item:pressed {
+    background-color: #3d8bff;
+    color: #ffffff;
+}
 QToolTip {
     background-color: #22262d;
     border: 1px solid #3a4049;
@@ -145,7 +162,15 @@ int main(int argc, char *argv[])
 
     qInstallMessageHandler(messageHandler);
 
-    MainWindow window;
+    QCommandLineParser parser;
+    QCommandLineOption configOption(QStringLiteral("config"),
+                                    QStringLiteral("Load this .wrrec.json config at startup."),
+                                    QStringLiteral("path"));
+    parser.addOption(configOption);
+    parser.addHelpOption();
+    parser.process(app);
+
+    MainWindow window(nullptr, parser.value(configOption));
     window.show();
 
     return app.exec();

@@ -46,7 +46,10 @@ npm run dev
 - Track WAV writers are created after the stream has settled on its sample rate, so the WAV header always matches the capture rate.
 - Armed tracks are monitored live: the engine keeps input streams open (no writers) so meters move before recording; monitoring restarts automatically after a recording stops. Monitoring errors go to the status bar, not a dialog.
 - All PortAudio start/stop calls happen on the GUI thread: ASIO drivers are COM objects bound to the thread that initialised PortAudio, so opening them from a worker thread fails with "Unanticipated host error".
-- `RecorderTest.exe monitor` exercises the monitoring → record → monitoring cycle headlessly.
+- `RecorderTest.exe monitor` exercises the monitoring → record → monitoring cycle headlessly; `RecorderTest.exe config` round-trips a config file.
+- Configs are JSON (`*.wrrec.json`, see `src/core/RecorderConfig.cpp`): output dir, format, combined flag and per-track name / API name / device name / first channel / stereo / armed. Devices are stored by name because PortAudio indices are not stable. File menu: New/Open/Save/Save As, "Use this config at startup" (QSettings `WestRadio/Recorder` → `startupConfig`), overridable with `WestRadio.Recorder.exe --config <path>`.
+- New tracks default to the same device as the previous track with the first channel advanced past it, so adding N tracks walks through the device's channels.
+- The combined WAV is built with FFmpeg `amerge` and keeps each track's channels separate (verified: a silent input stays silent in its own channel). Identical channels in a combined file mean the tracks were pointed at the same input channel.
 - Recording-start failures are reported with the PortAudio error text in a dialog; warnings are also appended to `%LOCALAPPDATA%\WestRadio.Recorder\recorder.log`.
 - UI is a dark Fairlight-style console: vertical 96px channel strips with segmented meters and a dB scale; `RecorderTest.exe <ms> [apiFilter] [deviceFilter] [channelOffset]` for headless checks.
 - Every track writes a 32-bit float WAV file named `<TRACK>_<YYYY-MM-DD_HHMMSS>.wav`.

@@ -52,6 +52,8 @@ set(CORE_SOURCES
     src/core/WavStreamWriter.cpp
     src/core/FfmpegTask.h
     src/core/FfmpegTask.cpp
+    src/core/RecorderConfig.h
+    src/core/RecorderConfig.cpp
 )
 
 set(SOURCES

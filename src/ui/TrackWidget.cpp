@@ -45,11 +45,11 @@ void TrackWidget::buildUi()
     channelSpin_ = new QSpinBox(this);
     channelSpin_->setMinimum(1);
     channelSpin_->setMaximum(128);
-    channelSpin_->setValue(1);
+    channelSpin_->setValue(track_->channelOffset() + 1);
     channelSpin_->setToolTip(tr("First channel"));
     channelLayout->addWidget(channelSpin_);
     stereoCheck_ = new QCheckBox(tr("ST"), this);
-    stereoCheck_->setChecked(true);
+    stereoCheck_->setChecked(track_->channelCount() == 2);
     stereoCheck_->setToolTip(tr("Stereo"));
     channelLayout->addWidget(stereoCheck_);
     mainLayout->addLayout(channelLayout);
@@ -256,6 +256,7 @@ void TrackWidget::updateInfo()
 void TrackWidget::onNameChanged(const QString &text)
 {
     track_->setName(text.trimmed());
+    emit nameChanged();
 }
 
 void TrackWidget::onOffsetChanged(int value)

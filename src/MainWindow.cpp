@@ -24,8 +24,16 @@
 #include <QRegularExpression>
 #include <QSettings>
 #include <QCloseEvent>
+#include <QMenuBar>
+#include <QAction>
+#include <QFileInfo>
 
-MainWindow::MainWindow(QWidget *parent)
+namespace {
+const QString kConfigFilter = QStringLiteral("WestRadio Recorder config (*.wrrec.json)");
+const QString kConfigSuffix = QStringLiteral(".wrrec.json");
+}
+
+MainWindow::MainWindow(QWidget *parent, const QString &configPath)
     : QMainWindow(parent), engine_(new AudioEngine(this))
 {
     buildUi();
@@ -59,7 +67,37 @@ MainWindow::MainWindow(QWidget *parent)
                                   Qt::QueuedConnection);
     });
 
-    addTrack();
+    // Startup config: --config argument wins, then the stored QSettings path.
+    QString startupPath = configPath;
+    if (startupPath.isEmpty())
+        startupPath = QSettings(QStringLiteral("WestRadio"), QStringLiteral("Recorder"))
+                          .value(QStringLiteral("startupConfig")).toString();
+
+    if (!startupPath.isEmpty() && QFile::exists(startupPath)) {
+        RecorderConfig cfg;
+        QString error;
+        if (RecorderConfig::load(startupPath, &cfg, &error)) {
+            QStringList warnings;
+            applyConfig(cfg, &warnings);
+            currentConfigPath_ = startupPath;
+            if (!warnings.isEmpty()) {
+                statusLabel_->setText(warnings.first());
+                QMessageBox::warning(this, tr("Config loaded with warnings"),
+                                     warnings.join(QLatin1Char('\n')));
+            }
+        } else {
+            statusLabel_->setText(tr("Failed to load startup config: %1").arg(error));
+            addTrack();
+        }
+    } else {
+        if (!startupPath.isEmpty())
+            statusLabel_->setText(tr("Startup config not found: %1").arg(startupPath));
+        addTrack();
+    }
+
+    dirty_ = false;
+    updateTitle();
+    updateStartupAction();
 }
 
 MainWindow::~MainWindow()
@@ -74,6 +112,38 @@ MainWindow::~MainWindow()
 
 void MainWindow::buildUi()
 {
+    // File menu
+    QMenu *fileMenu = menuBar()->addMenu(tr("&File"));
+    newAction_ = fileMenu->addAction(tr("&New"), this, &MainWindow::newConfig);
+    newAction_->setShortcut(QKeySequence::New);
+    openAction_ = fileMenu->addAction(tr("&Open..."), this, &MainWindow::openConfig);
+    openAction_->setShortcut(QKeySequence::Open);
+    QAction *saveAction = fileMenu->addAction(tr("&Save"), this, &MainWindow::saveConfig);
+    saveAction->setShortcut(QKeySequence::Save);
+    QAction *saveAsAction = fileMenu->addAction(tr("Save &As..."), this, &MainWindow::saveConfigAs);
+    saveAsAction->setShortcut(QKeySequence::SaveAs);
+    fileMenu->addSeparator();
+    startupAction_ = fileMenu->addAction(tr("Use this config at startup"));
+    startupAction_->setCheckable(true);
+    connect(startupAction_, &QAction::toggled, this, [this](bool checked) {
+        if (checked && currentConfigPath_.isEmpty())
+            saveConfigAs();
+        QSettings settings(QStringLiteral("WestRadio"), QStringLiteral("Recorder"));
+        if (checked && !currentConfigPath_.isEmpty())
+            settings.setValue(QStringLiteral("startupConfig"), currentConfigPath_);
+        else
+            settings.remove(QStringLiteral("startupConfig"));
+        updateStartupAction();
+    });
+    QAction *clearStartupAction = fileMenu->addAction(tr("Clear startup config"), this, [this]() {
+        QSettings(QStringLiteral("WestRadio"), QStringLiteral("Recorder"))
+            .remove(QStringLiteral("startupConfig"));
+        updateStartupAction();
+    });
+    Q_UNUSED(clearStartupAction);
+    fileMenu->addSeparator();
+    fileMenu->addAction(tr("E&xit"), this, &QWidget::close);
+
     auto *central = new QWidget(this);
     auto *mainLayout = new QVBoxLayout(central);
     mainLayout->setContentsMargins(0, 0, 0, 0);
@@ -146,6 +216,7 @@ void MainWindow::buildUi()
     QString defaultOutput = QStandardPaths::writableLocation(QStandardPaths::MusicLocation);
     outputEdit_->setText(defaultOutput);
     outputEdit_->setMaximumWidth(260);
+    connect(outputEdit_, &QLineEdit::textChanged, this, &MainWindow::markDirty);
     topBar->addWidget(outputEdit_);
     auto *browseButton = new QPushButton(tr("Browse"), this);
     connect(browseButton, &QPushButton::clicked, this, &MainWindow::onBrowseOutput);
@@ -158,6 +229,9 @@ void MainWindow::buildUi()
     topBar->addWidget(mp3Radio_);
     combinedCheck_ = new QCheckBox(tr("Combined WAV"), this);
     topBar->addWidget(combinedCheck_);
+    connect(wavRadio_, &QRadioButton::toggled, this, &MainWindow::markDirty);
+    connect(mp3Radio_, &QRadioButton::toggled, this, &MainWindow::markDirty);
+    connect(combinedCheck_, &QCheckBox::toggled, this, &MainWindow::markDirty);
 
     mainLayout->addWidget(toolbar);
 
@@ -206,9 +280,32 @@ void MainWindow::buildUi()
     mainLayout->addWidget(statusBar);
 
     setCentralWidget(central);
-    setWindowTitle(tr("WestRadio Recorder"));
     setMinimumSize(900, 600);
     resize(1400, 800);
+}
+
+void MainWindow::updateTitle()
+{
+    QString name = currentConfigPath_.isEmpty()
+        ? tr("Untitled")
+        : QFileInfo(currentConfigPath_).fileName();
+    setWindowTitle(tr("WestRadio Recorder \u2014 %1%2")
+                       .arg(name)
+                       .arg(dirty_ ? QStringLiteral(" *") : QString()));
+}
+
+void MainWindow::updateStartupAction()
+{
+    QString stored = QSettings(QStringLiteral("WestRadio"), QStringLiteral("Recorder"))
+                         .value(QStringLiteral("startupConfig")).toString();
+    startupAction_->setChecked(!currentConfigPath_.isEmpty()
+                               && stored == currentConfigPath_);
+}
+
+void MainWindow::markDirty()
+{
+    dirty_ = true;
+    updateTitle();
 }
 
 void MainWindow::renumberTracks()
@@ -228,23 +325,61 @@ void MainWindow::updateTrackSummary()
                                     .arg(armed));
 }
 
-void MainWindow::addTrack()
+void MainWindow::appendTrackWidget(AudioTrack *track)
 {
-    auto *track = new AudioTrack();
-    track->setName(QStringLiteral("TRACK_%1").arg(tracks_.size() + 1));
-    track->setArmed(true);
-
     auto *widget = new TrackWidget(engine_, track, tracksContainer_);
     connect(widget, &TrackWidget::removeRequested, this, &MainWindow::removeTrackWidget);
     connect(widget, &TrackWidget::configChanged, this, [this]() {
         monitorRefreshTimer_->start();
+        markDirty();
     });
+    connect(widget, &TrackWidget::nameChanged, this, &MainWindow::markDirty);
 
     tracks_.append(track);
     trackWidgets_.append(widget);
     engine_->addTrack(track);
     tracksLayout_->insertWidget(tracksLayout_->indexOf(addTrackButton_), widget);
 
+    renumberTracks();
+    updateTrackSummary();
+    monitorRefreshTimer_->start();
+}
+
+void MainWindow::addTrack()
+{
+    auto *track = new AudioTrack();
+    track->setName(QStringLiteral("TRACK_%1").arg(tracks_.size() + 1));
+    track->setArmed(true);
+
+    // Smart default: continue on the same device right after the last track.
+    if (!tracks_.isEmpty()) {
+        AudioTrack *last = tracks_.last();
+        track->setApiIndex(last->apiIndex());
+        track->setDeviceIndex(last->deviceIndex());
+        track->setChannelCount(last->channelCount());
+        int offset = last->channelOffset() + last->channelCount();
+        const PaDeviceInfo *info = Pa_GetDeviceInfo(last->deviceIndex());
+        int maxCh = info ? info->maxInputChannels : 0;
+        if (offset + track->channelCount() > maxCh)
+            offset = 0;
+        track->setChannelOffset(offset);
+    }
+
+    appendTrackWidget(track);
+    markDirty();
+}
+
+void MainWindow::removeAllTracks()
+{
+    while (!trackWidgets_.isEmpty()) {
+        TrackWidget *widget = trackWidgets_.takeFirst();
+        tracksLayout_->removeWidget(widget);
+        AudioTrack *track = widget->track();
+        tracks_.removeAll(track);
+        engine_->removeTrack(track);
+        widget->deleteLater();
+        delete track;
+    }
     renumberTracks();
     updateTrackSummary();
     monitorRefreshTimer_->start();
@@ -271,6 +406,163 @@ void MainWindow::removeTrackWidget(TrackWidget *widget)
     renumberTracks();
     updateTrackSummary();
     monitorRefreshTimer_->start();
+    markDirty();
+}
+
+RecorderConfig MainWindow::currentConfig() const
+{
+    RecorderConfig cfg;
+    cfg.outputDir = outputEdit_->text();
+    cfg.mp3 = mp3Radio_->isChecked();
+    cfg.combined = combinedCheck_->isChecked();
+
+    for (AudioTrack *t : tracks_) {
+        TrackConfig tc;
+        tc.name = t->name();
+        tc.firstChannel = t->channelOffset() + 1;
+        tc.stereo = t->channelCount() == 2;
+        tc.armed = t->isArmed();
+        const PaDeviceInfo *info = Pa_GetDeviceInfo(t->deviceIndex());
+        if (info) {
+            tc.device = QString::fromLocal8Bit(info->name);
+            const PaHostApiInfo *apiInfo = Pa_GetHostApiInfo(info->hostApi);
+            if (apiInfo)
+                tc.api = QString::fromLocal8Bit(apiInfo->name);
+        }
+        cfg.tracks.append(tc);
+    }
+    return cfg;
+}
+
+void MainWindow::applyConfig(const RecorderConfig &config, QStringList *warnings)
+{
+    removeAllTracks();
+
+    if (!config.outputDir.isEmpty())
+        outputEdit_->setText(config.outputDir);
+    wavRadio_->setChecked(!config.mp3);
+    mp3Radio_->setChecked(config.mp3);
+    combinedCheck_->setChecked(config.combined);
+
+    for (const TrackConfig &tc : config.tracks) {
+        auto *track = new AudioTrack();
+        track->setName(tc.name.isEmpty()
+                           ? QStringLiteral("TRACK_%1").arg(tracks_.size() + 1)
+                           : tc.name);
+        track->setChannelCount(tc.stereo ? 2 : 1);
+        track->setChannelOffset(std::max(0, tc.firstChannel - 1));
+        track->setArmed(tc.armed);
+        track->setFormat(mp3Radio_->isChecked() ? AudioTrack::MP3 : AudioTrack::WAV);
+
+        // Devices are stored by API + device name; PortAudio indices are not stable.
+        bool found = false;
+        for (const auto &api : engine_->audioApis()) {
+            if (api.name != tc.api)
+                continue;
+            for (const auto &dev : engine_->audioDevices(api.apiIndex)) {
+                if (dev.name == tc.device) {
+                    track->setApiIndex(api.apiIndex);
+                    track->setDeviceIndex(dev.deviceIndex);
+                    found = true;
+                    break;
+                }
+            }
+            if (found)
+                break;
+        }
+        if (!found && warnings)
+            warnings->append(tr("Track '%1': device '%2' (%3) not found")
+                                 .arg(track->name(), tc.device, tc.api));
+
+        appendTrackWidget(track);
+    }
+
+    if (tracks_.isEmpty())
+        addTrack();
+}
+
+bool MainWindow::saveConfigTo(const QString &path)
+{
+    QString error;
+    if (!RecorderConfig::save(path, currentConfig(), &error)) {
+        QMessageBox::critical(this, tr("Save failed"), error);
+        return false;
+    }
+    currentConfigPath_ = path;
+    dirty_ = false;
+    updateTitle();
+    updateStartupAction();
+    statusLabel_->setText(tr("Saved config: %1").arg(QDir::toNativeSeparators(path)));
+    return true;
+}
+
+void MainWindow::newConfig()
+{
+    if (recording_) {
+        QMessageBox::warning(this, tr("Recording"), tr("Stop recording before creating a new config."));
+        return;
+    }
+    removeAllTracks();
+    outputEdit_->setText(QStandardPaths::writableLocation(QStandardPaths::MusicLocation));
+    wavRadio_->setChecked(true);
+    combinedCheck_->setChecked(false);
+    currentConfigPath_.clear();
+    addTrack();
+    dirty_ = false;
+    updateTitle();
+    updateStartupAction();
+    statusLabel_->setText(tr("Ready"));
+}
+
+void MainWindow::openConfig()
+{
+    if (recording_) {
+        QMessageBox::warning(this, tr("Recording"), tr("Stop recording before opening a config."));
+        return;
+    }
+    QString path = QFileDialog::getOpenFileName(this, tr("Open config"), QString(), kConfigFilter);
+    if (path.isEmpty())
+        return;
+
+    RecorderConfig cfg;
+    QString error;
+    if (!RecorderConfig::load(path, &cfg, &error)) {
+        QMessageBox::critical(this, tr("Open failed"), error);
+        return;
+    }
+
+    QStringList warnings;
+    applyConfig(cfg, &warnings);
+    currentConfigPath_ = path;
+    dirty_ = false;
+    updateTitle();
+    updateStartupAction();
+    if (!warnings.isEmpty()) {
+        statusLabel_->setText(warnings.first());
+        QMessageBox::warning(this, tr("Config loaded with warnings"),
+                             warnings.join(QLatin1Char('\n')));
+    } else {
+        statusLabel_->setText(tr("Loaded config: %1").arg(QDir::toNativeSeparators(path)));
+    }
+}
+
+void MainWindow::saveConfig()
+{
+    if (currentConfigPath_.isEmpty())
+        saveConfigAs();
+    else
+        saveConfigTo(currentConfigPath_);
+}
+
+void MainWindow::saveConfigAs()
+{
+    QString path = QFileDialog::getSaveFileName(this, tr("Save config"),
+                                                currentConfigPath_, kConfigFilter);
+    if (path.isEmpty())
+        return;
+    if (!path.endsWith(kConfigSuffix, Qt::CaseInsensitive))
+        path += kConfigSuffix;
+    saveConfigTo(path);
 }
 
 void MainWindow::onBrowseOutput()
@@ -420,6 +712,8 @@ void MainWindow::setUiEnabled(bool enabled)
     combinedCheck_->setEnabled(enabled);
     armAllButton_->setEnabled(enabled);
     disarmAllButton_->setEnabled(enabled);
+    newAction_->setEnabled(enabled);
+    openAction_->setEnabled(enabled);
     recordButton_->setEnabled(enabled);
     stopButton_->setEnabled(false);
     for (TrackWidget *w : trackWidgets_)
