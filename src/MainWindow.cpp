@@ -26,6 +26,7 @@
 #include <QCloseEvent>
 #include <QMenuBar>
 #include <QAction>
+#include <QActionGroup>
 #include <QFileInfo>
 
 namespace {
@@ -66,6 +67,13 @@ MainWindow::MainWindow(QWidget *parent, const QString &configPath)
         QMetaObject::invokeMethod(this, [this, msg]() { onPostProcessMessage(msg); },
                                   Qt::QueuedConnection);
     });
+
+    // Persisted window geometry (independent of any config file); a loaded
+    // config may override it via applyConfig.
+    QByteArray savedGeometry = QSettings(QStringLiteral("WestRadio"), QStringLiteral("Recorder"))
+                                   .value(QStringLiteral("windowGeometry")).toByteArray();
+    if (!savedGeometry.isEmpty())
+        restoreGeometry(savedGeometry);
 
     // Startup config: --config argument wins, then the stored QSettings path.
     QString startupPath = configPath;
@@ -158,15 +166,6 @@ void MainWindow::buildUi()
     topBar->setContentsMargins(10, 6, 10, 6);
     topBar->setSpacing(10);
 
-    auto *titleLabel = new QLabel(tr("WestRadio Recorder"), this);
-    QFont titleFont = titleLabel->font();
-    titleFont.setPointSize(11);
-    titleFont.setBold(true);
-    titleLabel->setFont(titleFont);
-    topBar->addWidget(titleLabel);
-
-    topBar->addSpacing(16);
-
     recordButton_ = new QPushButton(tr("\u25cf REC"), this);
     recordButton_->setStyleSheet(QStringLiteral(
         "QPushButton { background-color: #e0322d; border: 1px solid #a02220; "
@@ -192,46 +191,45 @@ void MainWindow::buildUi()
 
     topBar->addStretch();
 
-    armAllButton_ = new QPushButton(tr("Arm all"), this);
-    armAllButton_->setFlat(true);
-    connect(armAllButton_, &QPushButton::clicked, this, [this]() {
+    // Options menu: format, output folder, arm/disarm.
+    outputDir_ = QStandardPaths::writableLocation(QStandardPaths::MusicLocation);
+
+    auto *optionsButton = new QPushButton(tr("Options \u25be"), this);
+    optionsButton->setFlat(true);
+    optionsButton_ = optionsButton;
+    auto *optionsMenu = new QMenu(optionsButton);
+
+    QMenu *formatMenu = optionsMenu->addMenu(tr("Format"));
+    auto *formatGroup = new QActionGroup(this);
+    wavAction_ = formatMenu->addAction(tr("WAV"));
+    wavAction_->setCheckable(true);
+    wavAction_->setChecked(true);
+    formatGroup->addAction(wavAction_);
+    mp3Action_ = formatMenu->addAction(tr("MP3 (320 kbps)"));
+    mp3Action_->setCheckable(true);
+    formatGroup->addAction(mp3Action_);
+    connect(wavAction_, &QAction::toggled, this, &MainWindow::markDirty);
+    connect(mp3Action_, &QAction::toggled, this, &MainWindow::markDirty);
+
+    optionsMenu->addAction(tr("Output folder\u2026"), this, &MainWindow::onBrowseOutput);
+    outputPathAction_ = optionsMenu->addAction(QString());
+    outputPathAction_->setEnabled(false);
+    updateOutputPathAction();
+
+    optionsMenu->addSeparator();
+    optionsMenu->addAction(tr("Arm all"), this, [this]() {
         for (auto *w : trackWidgets_)
             w->setArmed(true);
         updateTrackSummary();
     });
-    topBar->addWidget(armAllButton_);
-
-    disarmAllButton_ = new QPushButton(tr("Disarm all"), this);
-    disarmAllButton_->setFlat(true);
-    connect(disarmAllButton_, &QPushButton::clicked, this, [this]() {
+    optionsMenu->addAction(tr("Disarm all"), this, [this]() {
         for (auto *w : trackWidgets_)
             w->setArmed(false);
         updateTrackSummary();
     });
-    topBar->addWidget(disarmAllButton_);
 
-    topBar->addSpacing(16);
-
-    outputEdit_ = new QLineEdit(this);
-    QString defaultOutput = QStandardPaths::writableLocation(QStandardPaths::MusicLocation);
-    outputEdit_->setText(defaultOutput);
-    outputEdit_->setMaximumWidth(260);
-    connect(outputEdit_, &QLineEdit::textChanged, this, &MainWindow::markDirty);
-    topBar->addWidget(outputEdit_);
-    auto *browseButton = new QPushButton(tr("Browse"), this);
-    connect(browseButton, &QPushButton::clicked, this, &MainWindow::onBrowseOutput);
-    topBar->addWidget(browseButton);
-
-    wavRadio_ = new QRadioButton(tr("WAV"), this);
-    mp3Radio_ = new QRadioButton(tr("MP3"), this);
-    wavRadio_->setChecked(true);
-    topBar->addWidget(wavRadio_);
-    topBar->addWidget(mp3Radio_);
-    combinedCheck_ = new QCheckBox(tr("Combined WAV"), this);
-    topBar->addWidget(combinedCheck_);
-    connect(wavRadio_, &QRadioButton::toggled, this, &MainWindow::markDirty);
-    connect(mp3Radio_, &QRadioButton::toggled, this, &MainWindow::markDirty);
-    connect(combinedCheck_, &QCheckBox::toggled, this, &MainWindow::markDirty);
+    optionsButton->setMenu(optionsMenu);
+    topBar->addWidget(optionsButton);
 
     mainLayout->addWidget(toolbar);
 
@@ -280,7 +278,7 @@ void MainWindow::buildUi()
     mainLayout->addWidget(statusBar);
 
     setCentralWidget(central);
-    setMinimumSize(900, 600);
+    setMinimumSize(700, 500);
     resize(1400, 800);
 }
 
@@ -412,9 +410,9 @@ void MainWindow::removeTrackWidget(TrackWidget *widget)
 RecorderConfig MainWindow::currentConfig() const
 {
     RecorderConfig cfg;
-    cfg.outputDir = outputEdit_->text();
-    cfg.mp3 = mp3Radio_->isChecked();
-    cfg.combined = combinedCheck_->isChecked();
+    cfg.outputDir = outputDir_;
+    cfg.mp3 = mp3Action_->isChecked();
+    cfg.windowGeometry = saveGeometry();
 
     for (AudioTrack *t : tracks_) {
         TrackConfig tc;
@@ -438,11 +436,15 @@ void MainWindow::applyConfig(const RecorderConfig &config, QStringList *warnings
 {
     removeAllTracks();
 
-    if (!config.outputDir.isEmpty())
-        outputEdit_->setText(config.outputDir);
-    wavRadio_->setChecked(!config.mp3);
-    mp3Radio_->setChecked(config.mp3);
-    combinedCheck_->setChecked(config.combined);
+    if (!config.outputDir.isEmpty()) {
+        outputDir_ = config.outputDir;
+        updateOutputPathAction();
+    }
+    wavAction_->setChecked(!config.mp3);
+    mp3Action_->setChecked(config.mp3);
+
+    if (!config.windowGeometry.isEmpty())
+        restoreGeometry(config.windowGeometry);
 
     for (const TrackConfig &tc : config.tracks) {
         auto *track = new AudioTrack();
@@ -452,7 +454,7 @@ void MainWindow::applyConfig(const RecorderConfig &config, QStringList *warnings
         track->setChannelCount(tc.stereo ? 2 : 1);
         track->setChannelOffset(std::max(0, tc.firstChannel - 1));
         track->setArmed(tc.armed);
-        track->setFormat(mp3Radio_->isChecked() ? AudioTrack::MP3 : AudioTrack::WAV);
+        track->setFormat(mp3Action_->isChecked() ? AudioTrack::MP3 : AudioTrack::WAV);
 
         // Devices are stored by API + device name; PortAudio indices are not stable.
         bool found = false;
@@ -503,9 +505,9 @@ void MainWindow::newConfig()
         return;
     }
     removeAllTracks();
-    outputEdit_->setText(QStandardPaths::writableLocation(QStandardPaths::MusicLocation));
-    wavRadio_->setChecked(true);
-    combinedCheck_->setChecked(false);
+    outputDir_ = QStandardPaths::writableLocation(QStandardPaths::MusicLocation);
+    updateOutputPathAction();
+    wavAction_->setChecked(true);
     currentConfigPath_.clear();
     addTrack();
     dirty_ = false;
@@ -567,9 +569,19 @@ void MainWindow::saveConfigAs()
 
 void MainWindow::onBrowseOutput()
 {
-    QString dir = QFileDialog::getExistingDirectory(this, tr("Select output folder"), outputEdit_->text());
-    if (!dir.isEmpty())
-        outputEdit_->setText(dir);
+    QString dir = QFileDialog::getExistingDirectory(this, tr("Select output folder"), outputDir_);
+    if (!dir.isEmpty()) {
+        outputDir_ = dir;
+        updateOutputPathAction();
+        markDirty();
+    }
+}
+
+void MainWindow::updateOutputPathAction()
+{
+    QString shown = QDir::toNativeSeparators(outputDir_);
+    outputPathAction_->setText(QFontMetrics(font()).elidedText(shown, Qt::ElideMiddle, 400));
+    outputPathAction_->setToolTip(shown);
 }
 
 QString MainWindow::safeFileName(const QString &name) const
@@ -619,7 +631,7 @@ void MainWindow::startRecording()
     recordButton_->setEnabled(false);
     recordButton_->setText(tr("Starting..."));
 
-    AudioTrack::Format fmt = wavRadio_->isChecked() ? AudioTrack::WAV : AudioTrack::MP3;
+    AudioTrack::Format fmt = wavAction_->isChecked() ? AudioTrack::WAV : AudioTrack::MP3;
     for (AudioTrack *t : tracks_)
         t->setFormat(fmt);
 
@@ -631,7 +643,7 @@ void MainWindow::startRecording()
     statusLabel_->setText(tr("Starting..."));
     QApplication::setOverrideCursor(Qt::WaitCursor);
     QApplication::processEvents();
-    engine_->startRecording(outputEdit_->text());
+    engine_->startRecording(outputDir_);
     QApplication::restoreOverrideCursor();
 }
 
@@ -706,12 +718,7 @@ void MainWindow::onRecordingStopped()
 void MainWindow::setUiEnabled(bool enabled)
 {
     addTrackButton_->setEnabled(enabled);
-    outputEdit_->setEnabled(enabled);
-    wavRadio_->setEnabled(enabled);
-    mp3Radio_->setEnabled(enabled);
-    combinedCheck_->setEnabled(enabled);
-    armAllButton_->setEnabled(enabled);
-    disarmAllButton_->setEnabled(enabled);
+    optionsButton_->setEnabled(enabled);
     newAction_->setEnabled(enabled);
     openAction_->setEnabled(enabled);
     recordButton_->setEnabled(enabled);
@@ -757,10 +764,7 @@ void MainWindow::postProcess()
     postProcessing_ = true;
 
     // Read UI state on the main thread before handing work to the background thread.
-    const bool needCombined = combinedCheck_->isChecked();
-    const bool mp3Selected = mp3Radio_->isChecked();
-    const QString outputDir = outputEdit_->text();
-    const QDateTime recordStart = recordStart_;
+    const bool mp3Selected = mp3Action_->isChecked();
 
     struct TrackInfo {
         AudioTrack *track;
@@ -786,19 +790,14 @@ void MainWindow::postProcess()
 
     // Run FFmpeg work on a background thread so the UI stays responsive.
     QThread *worker = QThread::create([=]() {
-        QStringList wavPaths;
-        QList<int> channelCounts;
-
         for (const auto &info : armedTracks) {
             if (info.wav.isEmpty())
                 continue;
-            wavPaths.append(info.wav);
-            channelCounts.append(info.channels);
 
             if (mp3Selected) {
                 QString mp3 = info.wav;
                 mp3.replace(mp3.size() - 4, 4, QStringLiteral(".mp3"));
-                if (FfmpegTask::encodeToMp3(info.wav, mp3, info.sampleRate, info.channels)) {
+                if (FfmpegTask::encodeToMp3(info.wav, mp3, info.channels)) {
                     info.track->setFinalPath(mp3);
                 } else {
                     info.track->setFinalPath(info.wav);
@@ -806,12 +805,6 @@ void MainWindow::postProcess()
             } else {
                 info.track->setFinalPath(info.wav);
             }
-        }
-
-        if (needCombined && wavPaths.size() >= 1) {
-            QString base = QStringLiteral("COMBINED_%1").arg(recordStart.toString(QStringLiteral("yyyy-MM-dd_HHmmss")));
-            QString combinedPath = QDir(outputDir).filePath(base + QStringLiteral(".wav"));
-            FfmpegTask::combineWav(combinedPath, wavPaths, channelCounts);
         }
 
         // Clean up temporary WAVs when MP3 was requested.
@@ -857,6 +850,9 @@ void MainWindow::closeEvent(QCloseEvent *event)
 
     if (postProcessThread_ && postProcessThread_->isRunning())
         postProcessThread_->wait(15000);
+
+    QSettings(QStringLiteral("WestRadio"), QStringLiteral("Recorder"))
+        .setValue(QStringLiteral("windowGeometry"), saveGeometry());
 
     event->accept();
 }

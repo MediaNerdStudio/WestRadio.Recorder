@@ -208,7 +208,7 @@ static int runConfigTest()
     RecorderConfig cfg;
     cfg.outputDir = QStringLiteral("D:/tmp/out");
     cfg.mp3 = true;
-    cfg.combined = true;
+    cfg.windowGeometry = QByteArrayLiteral("\x01\x02\x03dummy-geometry\xff");
     for (int i = 0; i < 2; ++i) {
         TrackConfig t;
         t.name = QStringLiteral("TRACK_%1").arg(i + 1);
@@ -236,7 +236,8 @@ static int runConfigTest()
     }
 
     bool ok = loaded.outputDir == cfg.outputDir && loaded.mp3 == cfg.mp3 &&
-              loaded.combined == cfg.combined && loaded.tracks.size() == cfg.tracks.size();
+              loaded.windowGeometry == cfg.windowGeometry &&
+              loaded.tracks.size() == cfg.tracks.size();
     for (int i = 0; ok && i < cfg.tracks.size(); ++i) {
         const TrackConfig &a = cfg.tracks[i], &b = loaded.tracks[i];
         ok = a.name == b.name && a.api == b.api && a.device == b.device &&

@@ -10,7 +10,9 @@ bool RecorderConfig::save(const QString &path, const RecorderConfig &config, QSt
     root[QStringLiteral("version")] = 1;
     root[QStringLiteral("outputDir")] = config.outputDir;
     root[QStringLiteral("format")] = config.mp3 ? QStringLiteral("mp3") : QStringLiteral("wav");
-    root[QStringLiteral("combined")] = config.combined;
+    if (!config.windowGeometry.isEmpty())
+        root[QStringLiteral("windowGeometry")] =
+            QString::fromLatin1(config.windowGeometry.toBase64());
 
     QJsonArray tracks;
     for (const TrackConfig &t : config.tracks) {
@@ -63,7 +65,9 @@ bool RecorderConfig::load(const QString &path, RecorderConfig *config, QString *
 
     config->outputDir = root.value(QStringLiteral("outputDir")).toString();
     config->mp3 = root.value(QStringLiteral("format")).toString() == QStringLiteral("mp3");
-    config->combined = root.value(QStringLiteral("combined")).toBool(false);
+    config->windowGeometry =
+        QByteArray::fromBase64(root.value(QStringLiteral("windowGeometry"))
+                                   .toString().toLatin1());
 
     config->tracks.clear();
     for (const QJsonValue &v : root.value(QStringLiteral("tracks")).toArray()) {

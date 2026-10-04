@@ -1,6 +1,7 @@
 #pragma once
 
 #include <QString>
+#include <QByteArray>
 #include <QVector>
 
 struct TrackConfig {
@@ -15,7 +16,7 @@ struct TrackConfig {
 struct RecorderConfig {
     QString outputDir;
     bool mp3 = false;
-    bool combined = false;
+    QByteArray windowGeometry;
     QVector<TrackConfig> tracks;
 
     static bool save(const QString &path, const RecorderConfig &config, QString *error);

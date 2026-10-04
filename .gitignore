@@ -4,3 +4,9 @@ build-msvc/
 *.autosave
 .vs/
 CMakeLists.txt.user
+
+Development/*.wav
+Development/*.mp3
+Development/*.png
+*.wav
+*.mp3

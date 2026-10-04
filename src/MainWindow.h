@@ -63,20 +63,20 @@ private:
     bool saveConfigTo(const QString &path);
     void updateTitle();
     void updateStartupAction();
+    void updateOutputPathAction();
 
     AudioEngine *engine_;
     QVector<AudioTrack *> tracks_;
     QVector<TrackWidget *> trackWidgets_;
 
-    QLineEdit *outputEdit_;
-    QRadioButton *wavRadio_;
-    QRadioButton *mp3Radio_;
-    QCheckBox *combinedCheck_;
+    QString outputDir_;
+    QAction *wavAction_;
+    QAction *mp3Action_;
+    QAction *outputPathAction_;
+    QPushButton *optionsButton_;
     QPushButton *addTrackButton_;
     QPushButton *recordButton_;
     QPushButton *stopButton_;
-    QPushButton *armAllButton_;
-    QPushButton *disarmAllButton_;
     QLabel *statusLabel_;
     QLabel *elapsedLabel_;
     QLabel *trackSummaryLabel_;

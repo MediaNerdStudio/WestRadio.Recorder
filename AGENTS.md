@@ -8,7 +8,7 @@ Native Windows multitrack audio recorder built with C++20, Qt 6 and PortAudio.
 - Qt 6.5+ (tested with 6.11.2 MSVC 2022 64-bit)
 - Visual Studio 2022 / Build Tools C++ workload
 - CMake 3.24+
-- FFmpeg on PATH or at `C:\ffmpeg\bin\ffmpeg.exe` (used for MP3 encoding and the combined multi-channel WAV)
+- FFmpeg on PATH or at `C:\ffmpeg\bin\ffmpeg.exe` (used for MP3 encoding)
 
 The CMake build downloads PortAudio and a mirror of the Steinberg ASIO SDK automatically via `FetchContent`, so ASIO support is included without any manual SDK steps.
 
@@ -47,11 +47,9 @@ npm run dev
 - Armed tracks are monitored live: the engine keeps input streams open (no writers) so meters move before recording; monitoring restarts automatically after a recording stops. Monitoring errors go to the status bar, not a dialog.
 - All PortAudio start/stop calls happen on the GUI thread: ASIO drivers are COM objects bound to the thread that initialised PortAudio, so opening them from a worker thread fails with "Unanticipated host error".
 - `RecorderTest.exe monitor` exercises the monitoring → record → monitoring cycle headlessly; `RecorderTest.exe config` round-trips a config file.
-- Configs are JSON (`*.wrrec.json`, see `src/core/RecorderConfig.cpp`): output dir, format, combined flag and per-track name / API name / device name / first channel / stereo / armed. Devices are stored by name because PortAudio indices are not stable. File menu: New/Open/Save/Save As, "Use this config at startup" (QSettings `WestRadio/Recorder` → `startupConfig`), overridable with `WestRadio.Recorder.exe --config <path>`.
+- Configs are JSON (`*.wrrec.json`, see `src/core/RecorderConfig.cpp`): output dir, format, window geometry and per-track name / API name / device name / first channel / stereo / armed. Devices are stored by name because PortAudio indices are not stable. File menu: New/Open/Save/Save As, "Use this config at startup" (QSettings `WestRadio/Recorder` → `startupConfig`), overridable with `WestRadio.Recorder.exe --config <path>`.
 - New tracks default to the same device as the previous track with the first channel advanced past it, so adding N tracks walks through the device's channels.
-- The combined WAV is built with FFmpeg `amerge` and keeps each track's channels separate (verified: a silent input stays silent in its own channel). Identical channels in a combined file mean the tracks were pointed at the same input channel.
 - Recording-start failures are reported with the PortAudio error text in a dialog; warnings are also appended to `%LOCALAPPDATA%\WestRadio.Recorder\recorder.log`.
 - UI is a dark Fairlight-style console: vertical 96px channel strips with segmented meters and a dB scale; `RecorderTest.exe <ms> [apiFilter] [deviceFilter] [channelOffset]` for headless checks.
 - Every track writes a 32-bit float WAV file named `<TRACK>_<YYYY-MM-DD_HHMMSS>.wav`.
-- If MP3 is selected, the WAV is transcoded to MP3 with FFmpeg and the WAV is removed.
-- If "Also create one combined multi-channel WAV" is selected, FFmpeg `amerge` interleaves all track WAVs into a single Wave64 (`.wav`) file.
+- If MP3 is selected, the WAV is transcoded to MP3 (48 kHz, 320 kbps) with FFmpeg and the WAV is removed.
