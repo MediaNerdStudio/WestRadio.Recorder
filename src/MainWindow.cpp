@@ -787,13 +787,13 @@ void MainWindow::postProcess()
     // Run FFmpeg work on a background thread so the UI stays responsive.
     QThread *worker = QThread::create([=]() {
         QStringList wavPaths;
-        int totalChannels = 0;
+        QList<int> channelCounts;
 
         for (const auto &info : armedTracks) {
             if (info.wav.isEmpty())
                 continue;
             wavPaths.append(info.wav);
-            totalChannels += info.channels;
+            channelCounts.append(info.channels);
 
             if (mp3Selected) {
                 QString mp3 = info.wav;
@@ -811,7 +811,7 @@ void MainWindow::postProcess()
         if (needCombined && wavPaths.size() >= 1) {
             QString base = QStringLiteral("COMBINED_%1").arg(recordStart.toString(QStringLiteral("yyyy-MM-dd_HHmmss")));
             QString combinedPath = QDir(outputDir).filePath(base + QStringLiteral(".wav"));
-            FfmpegTask::combineWav(combinedPath, wavPaths, totalChannels);
+            FfmpegTask::combineWav(combinedPath, wavPaths, channelCounts);
         }
 
         // Clean up temporary WAVs when MP3 was requested.

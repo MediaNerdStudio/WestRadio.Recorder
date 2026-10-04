@@ -62,9 +62,9 @@ bool FfmpegTask::encodeToMp3(const QString &wavPath, const QString &mp3Path,
 }
 
 bool FfmpegTask::combineWav(const QString &outputPath, const QStringList &wavPaths,
-                            int totalChannels)
+                            const QList<int> &channelCounts)
 {
-    if (wavPaths.isEmpty())
+    if (wavPaths.isEmpty() || channelCounts.size() != wavPaths.size())
         return false;
 
     QStringList args;
@@ -79,15 +79,24 @@ bool FfmpegTask::combineWav(const QString &outputPath, const QStringList &wavPat
         return runFfmpeg(args, QStringLiteral("combined WAV"));
     }
 
-    // Use join with an unlabelled N-channel layout so the output carries
-    // discrete channels (no surround layout, no -ac remix): channel data is
-    // copied 1:1 from the track files in order.
+    // amerge re-sorts channels by speaker position (FL, FR, FC, ...) when the
+    // inputs have different layouts, which scrambles mono/stereo track order.
+    // Splitting every stereo input into mono streams first makes all inputs
+    // identical (mono), so amerge keeps strict input order.
     QString filter;
-    for (int i = 0; i < wavPaths.size(); ++i)
-        filter += QStringLiteral("[%1:a]").arg(i);
-    filter += QStringLiteral("join=inputs=%1:channel_layout=%2c[out]")
-                  .arg(wavPaths.size())
-                  .arg(totalChannels);
+    QString mergeInputs;
+    int monoCount = 0;
+    for (int i = 0; i < wavPaths.size(); ++i) {
+        if (channelCounts[i] >= 2) {
+            filter += QStringLiteral("[%1:a]channelsplit=channel_layout=stereo[s%1l][s%1r];").arg(i);
+            mergeInputs += QStringLiteral("[s%1l][s%1r]").arg(i);
+            monoCount += 2;
+        } else {
+            mergeInputs += QStringLiteral("[%1:a]").arg(i);
+            monoCount += 1;
+        }
+    }
+    filter += mergeInputs + QStringLiteral("amerge=inputs=%1[out]").arg(monoCount);
 
     args << QStringLiteral("-filter_complex") << filter
          << QStringLiteral("-map") << QStringLiteral("[out]")
