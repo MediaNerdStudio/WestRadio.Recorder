@@ -79,15 +79,18 @@ bool FfmpegTask::combineWav(const QString &outputPath, const QStringList &wavPat
         return runFfmpeg(args, QStringLiteral("combined WAV"));
     }
 
+    // Use join with an unlabelled N-channel layout so the output carries
+    // discrete channels (no surround layout, no -ac remix): channel data is
+    // copied 1:1 from the track files in order.
     QString filter;
     for (int i = 0; i < wavPaths.size(); ++i)
         filter += QStringLiteral("[%1:a]").arg(i);
-    filter += QStringLiteral("amerge=inputs=%1[out]").arg(wavPaths.size());
+    filter += QStringLiteral("join=inputs=%1:channel_layout=%2c[out]")
+                  .arg(wavPaths.size())
+                  .arg(totalChannels);
 
     args << QStringLiteral("-filter_complex") << filter
          << QStringLiteral("-map") << QStringLiteral("[out]")
-         << QStringLiteral("-ac") << QString::number(totalChannels)
-         << QStringLiteral("-ar") << QStringLiteral("48000")
          << QStringLiteral("-acodec") << QStringLiteral("pcm_f32le")
          << QStringLiteral("-f") << QStringLiteral("w64")
          << outputPath;
