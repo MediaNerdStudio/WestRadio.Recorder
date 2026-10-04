@@ -31,9 +31,10 @@ private slots:
     void startRecording();
     void stopRecording();
     void updateMeters();
+    void updateElapsed();
     void onBrowseOutput();
     void onRecordingStarted();
-    void onRecordingStartFailed();
+    void onRecordingStartFailed(const QString &message);
     void onRecordingStopped();
     void onPostProcessMessage(const QString &message);
     void onPostProcessFinished();
@@ -46,6 +47,8 @@ private:
     void postProcess();
     void setUiEnabled(bool enabled);
     QString safeFileName(const QString &name) const;
+    void renumberTracks();
+    void updateTrackSummary();
 
     AudioEngine *engine_;
     QVector<AudioTrack *> tracks_;
@@ -61,12 +64,15 @@ private:
     QPushButton *armAllButton_;
     QPushButton *disarmAllButton_;
     QLabel *statusLabel_;
+    QLabel *elapsedLabel_;
+    QLabel *trackSummaryLabel_;
 
     QScrollArea *scrollArea_;
     QWidget *tracksContainer_;
     QHBoxLayout *tracksLayout_;
 
     QTimer *meterTimer_;
+    QTimer *elapsedTimer_;
     QDateTime recordStart_;
     bool recording_ = false;
     bool stopping_ = false;

@@ -34,8 +34,14 @@ MainWindow::MainWindow(QWidget *parent)
     connect(meterTimer_, &QTimer::timeout, this, &MainWindow::updateMeters);
     meterTimer_->start(50);
 
+    elapsedTimer_ = new QTimer(this);
+    elapsedTimer_->setInterval(1000);
+    connect(elapsedTimer_, &QTimer::timeout, this, &MainWindow::updateElapsed);
+
     connect(engine_, &AudioEngine::recordingStarted, this, &MainWindow::onRecordingStarted);
     connect(engine_, &AudioEngine::recordingStopped, this, &MainWindow::onRecordingStopped);
+    connect(engine_, &AudioEngine::recordingFailed,
+            this, &MainWindow::onRecordingStartFailed, Qt::QueuedConnection);
 
     FfmpegTask::setProgressCallback([this](const QString &msg) {
         QMetaObject::invokeMethod(this, "onPostProcessMessage", Q_ARG(QString, msg));
@@ -55,40 +61,112 @@ void MainWindow::buildUi()
 {
     auto *central = new QWidget(this);
     auto *mainLayout = new QVBoxLayout(central);
+    mainLayout->setContentsMargins(0, 0, 0, 0);
+    mainLayout->setSpacing(0);
 
-    // Output directory row
-    auto *outputLayout = new QHBoxLayout();
-    outputLayout->addWidget(new QLabel(tr("Output folder"), this));
+    // Top toolbar
+    auto *toolbar = new QFrame(this);
+    toolbar->setStyleSheet(QStringLiteral(
+        "QFrame { background-color: #22262d; border: none; "
+        "border-bottom: 1px solid #2e333b; }"));
+    auto *topBar = new QHBoxLayout(toolbar);
+    topBar->setContentsMargins(10, 6, 10, 6);
+    topBar->setSpacing(10);
+
+    auto *titleLabel = new QLabel(tr("WestRadio Recorder"), this);
+    QFont titleFont = titleLabel->font();
+    titleFont.setPointSize(11);
+    titleFont.setBold(true);
+    titleLabel->setFont(titleFont);
+    topBar->addWidget(titleLabel);
+
+    topBar->addSpacing(16);
+
+    recordButton_ = new QPushButton(tr("\u25cf REC"), this);
+    recordButton_->setStyleSheet(QStringLiteral(
+        "QPushButton { background-color: #e0322d; border: 1px solid #a02220; "
+        "border-radius: 14px; color: #ffffff; font-weight: bold; padding: 4px 18px; }"
+        "QPushButton:hover { background-color: #f0433a; }"
+        "QPushButton:disabled { background-color: #5a2725; color: #8a9099; }"));
+    recordButton_->setMinimumHeight(28);
+    connect(recordButton_, &QPushButton::clicked, this, &MainWindow::startRecording);
+    topBar->addWidget(recordButton_);
+
+    stopButton_ = new QPushButton(tr("\u25a0 Stop"), this);
+    stopButton_->setEnabled(false);
+    stopButton_->setMinimumHeight(28);
+    connect(stopButton_, &QPushButton::clicked, this, &MainWindow::stopRecording);
+    topBar->addWidget(stopButton_);
+
+    elapsedLabel_ = new QLabel(QStringLiteral("00:00:00"), this);
+    QFont monoFont(QStringLiteral("Consolas"));
+    monoFont.setStyleHint(QFont::Monospace);
+    monoFont.setPointSize(14);
+    elapsedLabel_->setFont(monoFont);
+    topBar->addWidget(elapsedLabel_);
+
+    topBar->addStretch();
+
+    armAllButton_ = new QPushButton(tr("Arm all"), this);
+    armAllButton_->setFlat(true);
+    connect(armAllButton_, &QPushButton::clicked, this, [this]() {
+        for (auto *w : trackWidgets_)
+            w->setArmed(true);
+        updateTrackSummary();
+    });
+    topBar->addWidget(armAllButton_);
+
+    disarmAllButton_ = new QPushButton(tr("Disarm all"), this);
+    disarmAllButton_->setFlat(true);
+    connect(disarmAllButton_, &QPushButton::clicked, this, [this]() {
+        for (auto *w : trackWidgets_)
+            w->setArmed(false);
+        updateTrackSummary();
+    });
+    topBar->addWidget(disarmAllButton_);
+
+    topBar->addSpacing(16);
+
     outputEdit_ = new QLineEdit(this);
     QString defaultOutput = QStandardPaths::writableLocation(QStandardPaths::MusicLocation);
     outputEdit_->setText(defaultOutput);
-    outputLayout->addWidget(outputEdit_);
-    auto *browseButton = new QPushButton(tr("Browse..."), this);
+    outputEdit_->setMaximumWidth(260);
+    topBar->addWidget(outputEdit_);
+    auto *browseButton = new QPushButton(tr("Browse"), this);
     connect(browseButton, &QPushButton::clicked, this, &MainWindow::onBrowseOutput);
-    outputLayout->addWidget(browseButton);
-    mainLayout->addLayout(outputLayout);
+    topBar->addWidget(browseButton);
 
-    // Format row
-    auto *formatLayout = new QHBoxLayout();
-    formatLayout->addWidget(new QLabel(tr("Recording format"), this));
     wavRadio_ = new QRadioButton(tr("WAV"), this);
     mp3Radio_ = new QRadioButton(tr("MP3"), this);
     wavRadio_->setChecked(true);
-    formatLayout->addWidget(wavRadio_);
-    formatLayout->addWidget(mp3Radio_);
-    combinedCheck_ = new QCheckBox(tr("Also create one combined multi-channel WAV"), this);
-    formatLayout->addWidget(combinedCheck_);
-    formatLayout->addStretch();
-    mainLayout->addLayout(formatLayout);
+    topBar->addWidget(wavRadio_);
+    topBar->addWidget(mp3Radio_);
+    combinedCheck_ = new QCheckBox(tr("Combined WAV"), this);
+    topBar->addWidget(combinedCheck_);
 
-    // Track list
+    mainLayout->addWidget(toolbar);
+
+    // Track strips
     trackWidgets_.clear();
     tracks_.clear();
 
     tracksContainer_ = new QWidget(this);
+    tracksContainer_->setStyleSheet(QStringLiteral("background-color: #15171c;"));
     tracksLayout_ = new QHBoxLayout(tracksContainer_);
     tracksLayout_->setAlignment(Qt::AlignLeft | Qt::AlignTop);
-    tracksLayout_->setSpacing(8);
+    tracksLayout_->setSpacing(6);
+    tracksLayout_->setContentsMargins(6, 6, 6, 6);
+
+    addTrackButton_ = new QPushButton(tr("+"), this);
+    addTrackButton_->setFixedWidth(48);
+    addTrackButton_->setSizePolicy(QSizePolicy::Fixed, QSizePolicy::Expanding);
+    addTrackButton_->setToolTip(tr("Add source"));
+    addTrackButton_->setStyleSheet(QStringLiteral(
+        "QPushButton { border: 1px dashed #3a4049; background-color: transparent; "
+        "color: #8a9099; font-size: 20px; }"
+        "QPushButton:hover { border-color: #3d8bff; color: #3d8bff; }"));
+    connect(addTrackButton_, &QPushButton::clicked, this, &MainWindow::addTrack);
+    tracksLayout_->addWidget(addTrackButton_);
 
     scrollArea_ = new QScrollArea(this);
     scrollArea_->setWidgetResizable(true);
@@ -97,50 +175,42 @@ void MainWindow::buildUi()
     scrollArea_->setWidget(tracksContainer_);
     mainLayout->addWidget(scrollArea_, 1);
 
-    // Controls
-    auto *controls = new QHBoxLayout();
-    addTrackButton_ = new QPushButton(tr("+ Add source"), this);
-    connect(addTrackButton_, &QPushButton::clicked, this, &MainWindow::addTrack);
-    controls->addWidget(addTrackButton_);
-
-    armAllButton_ = new QPushButton(tr("Arm all"), this);
-    connect(armAllButton_, &QPushButton::clicked, this, [this]() {
-        for (auto *w : trackWidgets_) {
-            w->track()->setArmed(true);
-            // UI will be refreshed by updateMeters / could add a setter
-        }
-    });
-    controls->addWidget(armAllButton_);
-
-    disarmAllButton_ = new QPushButton(tr("Disarm all"), this);
-    connect(disarmAllButton_, &QPushButton::clicked, this, [this]() {
-        for (auto *w : trackWidgets_)
-            w->track()->setArmed(false);
-    });
-    controls->addWidget(disarmAllButton_);
-
-    controls->addStretch();
-
-    recordButton_ = new QPushButton(tr("Record"), this);
-    recordButton_->setStyleSheet(QStringLiteral("QPushButton { background-color: #c00000; color: white; font-weight: bold; }"));
-    recordButton_->setMinimumWidth(100);
-    connect(recordButton_, &QPushButton::clicked, this, &MainWindow::startRecording);
-    controls->addWidget(recordButton_);
-
-    stopButton_ = new QPushButton(tr("Stop"), this);
-    stopButton_->setEnabled(false);
-    stopButton_->setMinimumWidth(100);
-    connect(stopButton_, &QPushButton::clicked, this, &MainWindow::stopRecording);
-    controls->addWidget(stopButton_);
-
-    mainLayout->addLayout(controls);
-
+    // Bottom status bar
+    auto *statusBar = new QFrame(this);
+    statusBar->setStyleSheet(QStringLiteral(
+        "QFrame { background-color: #22262d; border: none; "
+        "border-top: 1px solid #2e333b; }"));
+    auto *statusLayout = new QHBoxLayout(statusBar);
+    statusLayout->setContentsMargins(10, 4, 10, 4);
     statusLabel_ = new QLabel(tr("Ready"), this);
-    mainLayout->addWidget(statusLabel_);
+    statusLabel_->setProperty("dim", true);
+    statusLayout->addWidget(statusLabel_, 1);
+    trackSummaryLabel_ = new QLabel(this);
+    trackSummaryLabel_->setProperty("dim", true);
+    statusLayout->addWidget(trackSummaryLabel_);
+    mainLayout->addWidget(statusBar);
 
     setCentralWidget(central);
     setWindowTitle(tr("WestRadio Recorder"));
-    resize(1200, 700);
+    setMinimumSize(900, 600);
+    resize(1400, 800);
+}
+
+void MainWindow::renumberTracks()
+{
+    for (int i = 0; i < trackWidgets_.size(); ++i)
+        trackWidgets_[i]->setChannelNumber(i + 1);
+}
+
+void MainWindow::updateTrackSummary()
+{
+    int armed = 0;
+    for (auto *w : trackWidgets_)
+        if (w->track()->isArmed())
+            ++armed;
+    trackSummaryLabel_->setText(tr("%1 tracks \u00b7 %2 armed")
+                                    .arg(trackWidgets_.size())
+                                    .arg(armed));
 }
 
 void MainWindow::addTrack()
@@ -154,7 +224,10 @@ void MainWindow::addTrack()
 
     tracks_.append(track);
     trackWidgets_.append(widget);
-    tracksLayout_->addWidget(widget);
+    tracksLayout_->insertWidget(tracksLayout_->indexOf(addTrackButton_), widget);
+
+    renumberTracks();
+    updateTrackSummary();
 }
 
 void MainWindow::removeTrackWidget(TrackWidget *widget)
@@ -174,6 +247,9 @@ void MainWindow::removeTrackWidget(TrackWidget *widget)
         widget->deleteLater();
         delete track;
     }
+
+    renumberTracks();
+    updateTrackSummary();
 }
 
 void MainWindow::onBrowseOutput()
@@ -238,20 +314,24 @@ void MainWindow::startRecording()
     }
 
     // Opening ASIO drivers can block the UI, so start recording on a background thread.
+    // Failure is reported via AudioEngine::recordingFailed.
     QThread *startThread = QThread::create([this]() {
-        if (!engine_->startRecording(outputEdit_->text()))
-            QMetaObject::invokeMethod(this, "onRecordingStartFailed", Qt::QueuedConnection);
+        engine_->startRecording(outputEdit_->text());
     });
     connect(startThread, &QThread::finished, startThread, &QObject::deleteLater);
     startThread->start();
 }
 
-void MainWindow::onRecordingStartFailed()
+void MainWindow::onRecordingStartFailed(const QString &message)
 {
     if (!recording_)
-        recordButton_->setText(tr("Record"));
+        recordButton_->setText(tr("\u25cf REC"));
     setUiEnabled(true);
-    QMessageBox::critical(this, tr("Recording failed"), tr("Could not start one or more audio streams."));
+    statusLabel_->setText(message.section(QLatin1Char('\n'), 0, 0));
+    QMessageBox box(QMessageBox::Critical, tr("Recording failed"),
+                    tr("Could not start recording."), QMessageBox::Ok, this);
+    box.setDetailedText(message);
+    box.exec();
 }
 
 void MainWindow::onRecordingStarted()
@@ -262,6 +342,20 @@ void MainWindow::onRecordingStarted()
     recordButton_->setEnabled(false);
     recordButton_->setText(tr("Recording..."));
     stopButton_->setEnabled(true);
+    elapsedLabel_->setText(QStringLiteral("00:00:00"));
+    elapsedTimer_->start();
+}
+
+void MainWindow::updateElapsed()
+{
+    qint64 secs = recordStart_.secsTo(QDateTime::currentDateTime());
+    int h = static_cast<int>(secs / 3600);
+    int m = static_cast<int>((secs % 3600) / 60);
+    int s = static_cast<int>(secs % 60);
+    elapsedLabel_->setText(QStringLiteral("%1:%2:%3")
+                               .arg(h, 2, 10, QLatin1Char('0'))
+                               .arg(m, 2, 10, QLatin1Char('0'))
+                               .arg(s, 2, 10, QLatin1Char('0')));
 }
 
 void MainWindow::stopRecording()
@@ -285,6 +379,8 @@ void MainWindow::onRecordingStopped()
 {
     recording_ = false;
     stopping_ = false;
+    elapsedTimer_->stop();
+    elapsedLabel_->setText(QStringLiteral("00:00:00"));
     recordButton_->setEnabled(false);
     stopButton_->setEnabled(false);
     statusLabel_->setText(tr("Encoding / finishing..."));
@@ -322,7 +418,7 @@ void MainWindow::onPostProcessFinished()
 {
     postProcessing_ = false;
     setUiEnabled(true);
-    recordButton_->setText(tr("Record"));
+    recordButton_->setText(tr("\u25cf REC"));
 
     QStringList created;
     for (AudioTrack *t : tracks_) {

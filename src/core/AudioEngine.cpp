@@ -3,6 +3,7 @@
 #include "DeviceStream.h"
 #include <QDebug>
 #include <QDateTime>
+#include <QSet>
 
 AudioEngine::AudioEngine(QObject *parent)
     : QObject(parent)
@@ -89,70 +90,116 @@ bool AudioEngine::isRecording() const
     return false;
 }
 
+QString AudioEngine::lastError() const { return lastError_; }
+
+bool AudioEngine::fail(const QString &message)
+{
+    lastError_ = message;
+    qWarning().noquote() << "AudioEngine:" << message;
+    emit recordingFailed(message);
+    return false;
+}
+
 bool AudioEngine::startRecording(const QString &outputDir)
 {
     if (!initialized_)
-        return false;
+        return fail(tr("PortAudio is not initialized."));
 
     stopRecording();
+    lastError_.clear();
 
     QDateTime startTime = QDateTime::currentDateTime();
 
     // Set the sample rate for each armed track from its device and group by device index.
     QMap<PaDeviceIndex, QVector<AudioTrack *>> groups;
+    QStringList rangeErrors;
     for (AudioTrack *track : tracks_) {
         if (!track || !track->isArmed() || track->deviceIndex() == paNoDevice)
             continue;
         const PaDeviceInfo *info = Pa_GetDeviceInfo(track->deviceIndex());
         if (!info)
             continue;
-        if (track->channelOffset() + track->channelCount() > info->maxInputChannels)
+        if (track->channelOffset() + track->channelCount() > info->maxInputChannels) {
+            rangeErrors.append(tr("Track '%1': channels %2-%3 exceed device '%4' input count (%5)")
+                                   .arg(track->name())
+                                   .arg(track->channelOffset() + 1)
+                                   .arg(track->channelOffset() + track->channelCount())
+                                   .arg(QString::fromLocal8Bit(info->name))
+                                   .arg(info->maxInputChannels));
             continue;
-        track->setSampleRate(info->defaultSampleRate);
+        }
         groups[track->deviceIndex()].append(track);
     }
 
     if (groups.isEmpty()) {
-        qWarning() << "No armed tracks with valid devices";
-        return false;
+        QString msg = tr("No armed tracks with valid devices");
+        if (!rangeErrors.isEmpty())
+            msg += QLatin1Char('\n') + rangeErrors.join(QLatin1Char('\n'));
+        return fail(msg);
     }
 
-    // Start each track's writer first so buffers are ready before audio arrives.
+    // PortAudio can only have one ASIO stream (and therefore one ASIO device)
+    // open at a time.
+    QSet<PaDeviceIndex> asioDevices;
     for (auto it = groups.begin(); it != groups.end(); ++it) {
-        for (AudioTrack *track : it.value()) {
-            if (!track->start(startTime, outputDir)) {
-                qWarning() << "Failed to start track writer for" << track->name();
-                stopRecording();
-                return false;
-            }
-        }
+        const PaDeviceInfo *info = Pa_GetDeviceInfo(it.key());
+        const PaHostApiInfo *apiInfo = info ? Pa_GetHostApiInfo(info->hostApi) : nullptr;
+        if (apiInfo && apiInfo->type == paASIO)
+            asioDevices.insert(it.key());
     }
+    if (asioDevices.size() > 1)
+        return fail(tr("PortAudio can only open one ASIO device at a time; "
+                       "put all ASIO tracks on the same device."));
 
-    // Open and start one PortAudio stream per device.
+    // Open one PortAudio stream per device first so each track's writer is
+    // created with the sample rate the stream actually settled on.
     for (auto it = groups.begin(); it != groups.end(); ++it) {
         PaDeviceIndex devIdx = it.key();
         QVector<AudioTrack *> tracks = it.value();
 
         std::vector<DeviceStream::Subscriber> subs;
+        QStringList trackNames;
         for (AudioTrack *track : tracks) {
             subs.push_back({track, track->channelOffset(), track->channelCount()});
+            trackNames.append(track->name());
         }
 
         auto *ds = new DeviceStream();
         if (!ds->open(devIdx, subs)) {
+            QString msg = tr("Could not open audio stream for tracks [%1]:\n%2")
+                              .arg(trackNames.join(QStringLiteral(", ")))
+                              .arg(ds->lastError());
             delete ds;
             cleanupOnStartFailure();
-            return false;
-        }
-
-        if (!ds->start()) {
-            ds->close();
-            delete ds;
-            cleanupOnStartFailure();
-            return false;
+            return fail(msg);
         }
 
         deviceStreams_.insert(devIdx, ds);
+    }
+
+    // Start each track's writer with the negotiated sample rate before audio
+    // starts arriving.
+    for (auto it = groups.begin(); it != groups.end(); ++it) {
+        DeviceStream *ds = deviceStreams_.value(it.key());
+        for (AudioTrack *track : it.value()) {
+            if (ds)
+                track->setSampleRate(ds->sampleRate());
+            if (!track->start(startTime, outputDir)) {
+                QString msg = tr("Failed to start track writer for '%1'").arg(track->name());
+                cleanupOnStartFailure();
+                return fail(msg);
+            }
+        }
+    }
+
+    // Writers are ready; start the streams.
+    for (auto it = deviceStreams_.begin(); it != deviceStreams_.end(); ++it) {
+        DeviceStream *ds = it.value();
+        if (!ds->start()) {
+            QString msg = tr("Could not start audio stream:\n%1").arg(ds->lastError());
+            cleanupOnStartFailure();
+            return fail(msg);
+        }
     }
 
     emit recordingStarted();

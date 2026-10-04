@@ -42,7 +42,10 @@ npm run dev
 
 - Each track selects a Windows audio API (MME, DirectSound, WASAPI, WDM-KS, ASIO), device, mono/stereo mode and a physical channel offset.
 - A single PortAudio stream is opened per device; all tracks using the same device share that stream.
-- ASIO streams automatically fall back to full-duplex mode and common sample rates if the initial open fails.
+- ASIO streams open only the channel range the tracks need (PortAudio channel selectors), negotiate a supported sample rate (device default first, then 48k/44.1k/96k/88.2k/192k) and fall back to full-duplex if input-only fails. PortAudio allows only one ASIO device open at a time.
+- Track WAV writers are created after the stream has settled on its sample rate, so the WAV header always matches the capture rate.
+- Recording-start failures are reported with the PortAudio error text in a dialog; warnings are also appended to `%LOCALAPPDATA%\WestRadio.Recorder\recorder.log`.
+- UI is a dark Fairlight-style console: vertical 96px channel strips with segmented meters and a dB scale; `RecorderTest.exe <ms> [apiFilter] [deviceFilter] [channelOffset]` for headless checks.
 - Every track writes a 32-bit float WAV file named `<TRACK>_<YYYY-MM-DD_HHMMSS>.wav`.
 - If MP3 is selected, the WAV is transcoded to MP3 with FFmpeg and the WAV is removed.
 - If "Also create one combined multi-channel WAV" is selected, FFmpeg `amerge` interleaves all track WAVs into a single Wave64 (`.wav`) file.

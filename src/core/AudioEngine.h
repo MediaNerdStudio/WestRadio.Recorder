@@ -44,15 +44,19 @@ public:
     bool isRecording() const;
     bool startRecording(const QString &outputDir);
     bool stopRecording();
+    QString lastError() const;
 
 signals:
     void recordingStarted();
     void recordingStopped();
+    void recordingFailed(const QString &message);
 
 private:
     void cleanupOnStartFailure();
+    bool fail(const QString &message);
 
     bool initialized_ = false;
+    QString lastError_;
     QVector<AudioTrack *> tracks_;
     QMap<PaDeviceIndex, DeviceStream *> deviceStreams_;
 };

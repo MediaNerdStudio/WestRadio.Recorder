@@ -22,12 +22,16 @@ public:
 
     AudioTrack *track() const;
     void refreshMeter();
+    void setChannelNumber(int number);
+    void setArmed(bool armed);
 
     struct DeviceActionData {
         int apiIndex;
         PaDeviceIndex deviceIndex;
         int maxInputChannels;
         double sampleRate;
+        QString apiName;
+        QString deviceName;
     };
 
 signals:
@@ -38,7 +42,7 @@ private slots:
     void onNameChanged(const QString &text);
     void onOffsetChanged(int value);
     void onStereoChanged(int state);
-    void onArmedChanged(int state);
+    void onArmedChanged(bool checked);
     void onRemoveClicked();
 
 private:
@@ -46,17 +50,19 @@ private:
     void buildDeviceMenu();
     void selectDevice(int apiIndex, PaDeviceIndex deviceIndex);
     void updateInfo();
+    void updateDeviceButton();
 
     AudioEngine *engine_;
     AudioTrack *track_;
 
+    QLabel *channelNumberLabel_;
     QLineEdit *nameEdit_;
     QPushButton *deviceButton_;
     QMenu *deviceMenu_;
     QSpinBox *channelSpin_;
     QCheckBox *stereoCheck_;
     QLabel *sampleRateLabel_;
-    QCheckBox *armedCheck_;
+    QPushButton *armButton_;
     QPushButton *removeButton_;
     MeterWidget *meter_;
 
