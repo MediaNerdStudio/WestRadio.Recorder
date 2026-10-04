@@ -1,12 +1,14 @@
 #pragma once
 
 #include <QFrame>
-#include <QComboBox>
 #include <QLineEdit>
 #include <QSpinBox>
 #include <QCheckBox>
 #include <QPushButton>
 #include <QLabel>
+#include <QMenu>
+#include <QMetaType>
+#include <portaudio.h>
 #include "MeterWidget.h"
 
 class AudioEngine;
@@ -16,40 +18,49 @@ class TrackWidget : public QFrame
 {
     Q_OBJECT
 public:
-    TrackWidget(AudioEngine *engine, AudioTrack *track, QWidget *parent = nullptr);
+    explicit TrackWidget(AudioEngine *engine, AudioTrack *track, QWidget *parent = nullptr);
 
     AudioTrack *track() const;
     void refreshMeter();
+
+    struct DeviceActionData {
+        int apiIndex;
+        PaDeviceIndex deviceIndex;
+        int maxInputChannels;
+        double sampleRate;
+    };
 
 signals:
     void removeRequested(TrackWidget *widget);
 
 private slots:
-    void onApiChanged(int index);
-    void onDeviceChanged(int index);
-    void onModeChanged(int index);
+    void onDeviceActionTriggered();
     void onNameChanged(const QString &text);
     void onOffsetChanged(int value);
+    void onStereoChanged(int state);
     void onArmedChanged(int state);
     void onRemoveClicked();
 
 private:
-    void populateApis();
-    void populateDevices();
-    void updateInfoLabel();
+    void buildUi();
+    void buildDeviceMenu();
+    void selectDevice(int apiIndex, PaDeviceIndex deviceIndex);
+    void updateInfo();
 
     AudioEngine *engine_;
     AudioTrack *track_;
 
     QLineEdit *nameEdit_;
-    QComboBox *apiCombo_;
-    QComboBox *deviceCombo_;
-    QComboBox *modeCombo_;
-    QSpinBox *offsetSpin_;
+    QPushButton *deviceButton_;
+    QMenu *deviceMenu_;
+    QSpinBox *channelSpin_;
+    QCheckBox *stereoCheck_;
+    QLabel *sampleRateLabel_;
     QCheckBox *armedCheck_;
     QPushButton *removeButton_;
-    QLabel *infoLabel_;
     MeterWidget *meter_;
 
-    bool updating_ = false;
+    DeviceActionData selectedDevice_;
 };
+
+Q_DECLARE_METATYPE(TrackWidget::DeviceActionData)

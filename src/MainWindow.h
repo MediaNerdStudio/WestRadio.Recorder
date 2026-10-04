@@ -14,6 +14,7 @@ class QCheckBox;
 class QRadioButton;
 class QLabel;
 class QScrollArea;
+class QHBoxLayout;
 class QVBoxLayout;
 class QTimer;
 
@@ -32,6 +33,7 @@ private slots:
     void updateMeters();
     void onBrowseOutput();
     void onRecordingStarted();
+    void onRecordingStartFailed();
     void onRecordingStopped();
     void onPostProcessMessage(const QString &message);
     void onPostProcessFinished();
@@ -62,10 +64,11 @@ private:
 
     QScrollArea *scrollArea_;
     QWidget *tracksContainer_;
-    QVBoxLayout *tracksLayout_;
+    QHBoxLayout *tracksLayout_;
 
     QTimer *meterTimer_;
     QDateTime recordStart_;
     bool recording_ = false;
+    bool stopping_ = false;
     bool postProcessing_ = false;
 };

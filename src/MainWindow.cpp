@@ -86,12 +86,14 @@ void MainWindow::buildUi()
     tracks_.clear();
 
     tracksContainer_ = new QWidget(this);
-    tracksLayout_ = new QVBoxLayout(tracksContainer_);
-    tracksLayout_->setAlignment(Qt::AlignTop);
-    tracksLayout_->setSpacing(4);
+    tracksLayout_ = new QHBoxLayout(tracksContainer_);
+    tracksLayout_->setAlignment(Qt::AlignLeft | Qt::AlignTop);
+    tracksLayout_->setSpacing(8);
 
     scrollArea_ = new QScrollArea(this);
     scrollArea_->setWidgetResizable(true);
+    scrollArea_->setHorizontalScrollBarPolicy(Qt::ScrollBarAsNeeded);
+    scrollArea_->setVerticalScrollBarPolicy(Qt::ScrollBarAlwaysOff);
     scrollArea_->setWidget(tracksContainer_);
     mainLayout->addWidget(scrollArea_, 1);
 
@@ -235,12 +237,21 @@ void MainWindow::startRecording()
         engine_->addTrack(t);
     }
 
-    if (!engine_->startRecording(outputEdit_->text())) {
-        QMessageBox::critical(this, tr("Recording failed"), tr("Could not start one or more audio streams."));
+    // Opening ASIO drivers can block the UI, so start recording on a background thread.
+    QThread *startThread = QThread::create([this]() {
+        if (!engine_->startRecording(outputEdit_->text()))
+            QMetaObject::invokeMethod(this, "onRecordingStartFailed", Qt::QueuedConnection);
+    });
+    connect(startThread, &QThread::finished, startThread, &QObject::deleteLater);
+    startThread->start();
+}
+
+void MainWindow::onRecordingStartFailed()
+{
+    if (!recording_)
         recordButton_->setText(tr("Record"));
-        setUiEnabled(true);
-        return;
-    }
+    setUiEnabled(true);
+    QMessageBox::critical(this, tr("Recording failed"), tr("Could not start one or more audio streams."));
 }
 
 void MainWindow::onRecordingStarted()
@@ -255,16 +266,25 @@ void MainWindow::onRecordingStarted()
 
 void MainWindow::stopRecording()
 {
-    if (!recording_)
+    if (!recording_ || stopping_)
         return;
 
+    stopping_ = true;
     statusLabel_->setText(tr("Stopping..."));
-    engine_->stopRecording();
+    stopButton_->setEnabled(false);
+
+    // Stopping some ASIO drivers can block for a moment, so run it off the UI thread.
+    QThread *stopThread = QThread::create([this]() {
+        engine_->stopRecording();
+    });
+    connect(stopThread, &QThread::finished, stopThread, &QObject::deleteLater);
+    stopThread->start();
 }
 
 void MainWindow::onRecordingStopped()
 {
     recording_ = false;
+    stopping_ = false;
     recordButton_->setEnabled(false);
     stopButton_->setEnabled(false);
     statusLabel_->setText(tr("Encoding / finishing..."));
@@ -393,6 +413,18 @@ void MainWindow::postProcess()
 
 void MainWindow::closeEvent(QCloseEvent *event)
 {
-    engine_->stopRecording();
+    stopRecording();
+
+    // Give the stop thread a moment to finish if a recording is active.
+    if (recording_ || stopping_ || postProcessing_) {
+        QEventLoop loop;
+        QTimer timer;
+        timer.setSingleShot(true);
+        connect(&timer, &QTimer::timeout, &loop, &QEventLoop::quit);
+        connect(engine_, &AudioEngine::recordingStopped, &loop, &QEventLoop::quit);
+        timer.start(3000);
+        loop.exec();
+    }
+
     event->accept();
 }

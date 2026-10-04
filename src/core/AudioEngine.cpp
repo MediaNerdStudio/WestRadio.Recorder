@@ -141,14 +141,14 @@ bool AudioEngine::startRecording(const QString &outputDir)
         auto *ds = new DeviceStream();
         if (!ds->open(devIdx, subs)) {
             delete ds;
-            stopRecording();
+            cleanupOnStartFailure();
             return false;
         }
 
         if (!ds->start()) {
             ds->close();
             delete ds;
-            stopRecording();
+            cleanupOnStartFailure();
             return false;
         }
 
@@ -157,6 +157,20 @@ bool AudioEngine::startRecording(const QString &outputDir)
 
     emit recordingStarted();
     return true;
+}
+
+void AudioEngine::cleanupOnStartFailure()
+{
+    for (auto it = deviceStreams_.begin(); it != deviceStreams_.end(); ++it) {
+        it.value()->stop();
+        it.value()->close();
+        delete it.value();
+    }
+    deviceStreams_.clear();
+
+    for (AudioTrack *track : tracks_)
+        if (track)
+            track->stop();
 }
 
 bool AudioEngine::stopRecording()

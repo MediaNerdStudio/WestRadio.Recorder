@@ -1,12 +1,11 @@
 #include "TrackWidget.h"
 #include "core/AudioEngine.h"
 #include "core/AudioTrack.h"
-#include <QHBoxLayout>
 #include <QVBoxLayout>
+#include <QHBoxLayout>
 #include <QLabel>
-#include <QMessageBox>
-#include <QSpinBox>
-#include <QDateTime>
+#include <QMenu>
+#include <QAction>
 #include <algorithm>
 
 TrackWidget::TrackWidget(AudioEngine *engine, AudioTrack *track, QWidget *parent)
@@ -14,160 +13,199 @@ TrackWidget::TrackWidget(AudioEngine *engine, AudioTrack *track, QWidget *parent
 {
     setFrameShape(QFrame::StyledPanel);
     setFrameShadow(QFrame::Raised);
+    setMinimumWidth(180);
+    setMaximumWidth(220);
 
-    QHBoxLayout *mainLayout = new QHBoxLayout(this);
-    mainLayout->setSpacing(8);
+    selectedDevice_ = {-1, paNoDevice, 0, 0.0};
+
+    buildUi();
+    buildDeviceMenu();
+    updateInfo();
+}
+
+void TrackWidget::buildUi()
+{
+    QVBoxLayout *mainLayout = new QVBoxLayout(this);
+    mainLayout->setSpacing(6);
 
     nameEdit_ = new QLineEdit(this);
     if (track_->name().isEmpty())
         track_->setName(QStringLiteral("TRACK_1"));
     nameEdit_->setText(track_->name());
-    nameEdit_->setMaximumWidth(160);
-    mainLayout->addWidget(new QLabel(tr("Name"), this));
     mainLayout->addWidget(nameEdit_);
 
-    apiCombo_ = new QComboBox(this);
-    mainLayout->addWidget(new QLabel(tr("API"), this));
-    mainLayout->addWidget(apiCombo_);
+    mainLayout->addWidget(new QLabel(tr("Input"), this));
 
-    deviceCombo_ = new QComboBox(this);
-    deviceCombo_->setMinimumWidth(220);
-    mainLayout->addWidget(new QLabel(tr("Device"), this));
-    mainLayout->addWidget(deviceCombo_);
+    deviceButton_ = new QPushButton(tr("Select input..."), this);
+    mainLayout->addWidget(deviceButton_);
 
-    modeCombo_ = new QComboBox(this);
-    modeCombo_->addItem(tr("Mono"), 1);
-    modeCombo_->addItem(tr("Stereo"), 2);
-    modeCombo_->setCurrentIndex(track_->channelCount() == 2 ? 1 : 0);
-    mainLayout->addWidget(new QLabel(tr("Mode"), this));
-    mainLayout->addWidget(modeCombo_);
+    QHBoxLayout *channelLayout = new QHBoxLayout();
+    channelLayout->addWidget(new QLabel(tr("1st channel"), this));
+    channelSpin_ = new QSpinBox(this);
+    channelSpin_->setMinimum(1);
+    channelSpin_->setMaximum(128);
+    channelSpin_->setValue(1);
+    channelLayout->addWidget(channelSpin_);
+    mainLayout->addLayout(channelLayout);
 
-    offsetSpin_ = new QSpinBox(this);
-    offsetSpin_->setMinimum(0);
-    offsetSpin_->setMaximum(128);
-    offsetSpin_->setValue(0);
-    mainLayout->addWidget(new QLabel(tr("Channel offset"), this));
-    mainLayout->addWidget(offsetSpin_);
+    stereoCheck_ = new QCheckBox(tr("Stereo"), this);
+    stereoCheck_->setChecked(true);
+    mainLayout->addWidget(stereoCheck_);
 
-    infoLabel_ = new QLabel(this);
-    mainLayout->addWidget(infoLabel_);
+    sampleRateLabel_ = new QLabel(tr("Sample rate: -"), this);
+    sampleRateLabel_->setWordWrap(true);
+    mainLayout->addWidget(sampleRateLabel_);
 
     meter_ = new MeterWidget(this);
-    meter_->setMinimumSize(40, 120);
-    meter_->setStereo(track_->channelCount() == 2);
-    mainLayout->addWidget(meter_);
+    meter_->setMinimumSize(60, 180);
+    meter_->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Expanding);
+    mainLayout->addWidget(meter_, 1);
 
     armedCheck_ = new QCheckBox(tr("Armed"), this);
-    armedCheck_->setChecked(true);
+    armedCheck_->setChecked(track_->isArmed());
     mainLayout->addWidget(armedCheck_);
 
     removeButton_ = new QPushButton(tr("Remove"), this);
     mainLayout->addWidget(removeButton_);
 
     connect(nameEdit_, &QLineEdit::textChanged, this, &TrackWidget::onNameChanged);
-    connect(apiCombo_, QOverload<int>::of(&QComboBox::currentIndexChanged), this, &TrackWidget::onApiChanged);
-    connect(deviceCombo_, QOverload<int>::of(&QComboBox::currentIndexChanged), this, &TrackWidget::onDeviceChanged);
-    connect(modeCombo_, QOverload<int>::of(&QComboBox::currentIndexChanged), this, &TrackWidget::onModeChanged);
-    connect(offsetSpin_, QOverload<int>::of(&QSpinBox::valueChanged), this, &TrackWidget::onOffsetChanged);
+    connect(channelSpin_, QOverload<int>::of(&QSpinBox::valueChanged), this, &TrackWidget::onOffsetChanged);
+    connect(stereoCheck_, &QCheckBox::stateChanged, this, &TrackWidget::onStereoChanged);
     connect(armedCheck_, &QCheckBox::stateChanged, this, &TrackWidget::onArmedChanged);
     connect(removeButton_, &QPushButton::clicked, this, &TrackWidget::onRemoveClicked);
-
-    populateApis();
-    onApiChanged(0);
-    onNameChanged(nameEdit_->text());
 }
 
 AudioTrack *TrackWidget::track() const { return track_; }
 
-void TrackWidget::populateApis()
+void TrackWidget::buildDeviceMenu()
 {
-    updating_ = true;
-    apiCombo_->clear();
-    auto apis = engine_->audioApis();
-    int currentApi = track_->apiIndex();
-    int selected = 0;
-    for (int i = 0; i < apis.size(); ++i) {
-        apiCombo_->addItem(apis[i].name, apis[i].apiIndex);
-        if (apis[i].apiIndex == currentApi)
-            selected = i;
+    deviceMenu_ = new QMenu(this);
+
+    int firstApi = -1;
+    PaDeviceIndex firstDevice = paNoDevice;
+
+    for (const auto &api : engine_->audioApis()) {
+        QMenu *apiMenu = deviceMenu_->addMenu(api.name);
+        auto devices = engine_->audioDevices(api.apiIndex);
+        bool hasDevice = false;
+        for (const auto &dev : devices) {
+            if (dev.maxInputChannels <= 0)
+                continue;
+            hasDevice = true;
+            QString text = QStringLiteral("%1 (%2 ch @ %3 Hz)")
+                               .arg(dev.name)
+                               .arg(dev.maxInputChannels)
+                               .arg(static_cast<int>(dev.defaultSampleRate));
+            QAction *action = apiMenu->addAction(text);
+            action->setCheckable(true);
+            action->setData(QVariant::fromValue(DeviceActionData{api.apiIndex,
+                                                                  dev.deviceIndex,
+                                                                  dev.maxInputChannels,
+                                                                  dev.defaultSampleRate}));
+            connect(action, &QAction::triggered, this, &TrackWidget::onDeviceActionTriggered);
+
+            if (firstDevice == paNoDevice) {
+                firstApi = api.apiIndex;
+                firstDevice = dev.deviceIndex;
+            }
+        }
+        if (!hasDevice)
+            apiMenu->addAction(tr("No inputs"))->setEnabled(false);
     }
-    apiCombo_->setCurrentIndex(selected);
-    updating_ = false;
+
+    deviceButton_->setMenu(deviceMenu_);
+
+    // Default to the first available device if none was previously set.
+    if (track_->deviceIndex() == paNoDevice && firstDevice != paNoDevice)
+        selectDevice(firstApi, firstDevice);
+    else if (track_->deviceIndex() != paNoDevice)
+        selectDevice(track_->apiIndex(), track_->deviceIndex());
 }
 
-void TrackWidget::populateDevices()
+void TrackWidget::selectDevice(int apiIndex, PaDeviceIndex deviceIndex)
 {
-    updating_ = true;
-    deviceCombo_->clear();
-
-    int apiIndex = apiCombo_->currentData().toInt();
-    if (apiIndex < 0)
-        apiIndex = 0;
-
-    auto devices = engine_->audioDevices(apiIndex);
-    int currentDevice = static_cast<int>(track_->deviceIndex());
-    int selected = -1;
-    int firstValid = -1;
-    for (int i = 0; i < devices.size(); ++i) {
-        int maxCh = devices[i].maxInputChannels;
-        QString text = QStringLiteral("%1 [%2ch @ %3Hz]")
-                           .arg(devices[i].name)
-                           .arg(maxCh)
-                           .arg(static_cast<int>(devices[i].defaultSampleRate));
-        deviceCombo_->addItem(text, static_cast<int>(devices[i].deviceIndex));
-        if (static_cast<int>(devices[i].deviceIndex) == currentDevice)
-            selected = i;
-        if (firstValid < 0 && maxCh > 0)
-            firstValid = i;
+    for (QAction *topAction : deviceMenu_->actions()) {
+        QMenu *apiMenu = topAction->menu();
+        if (!apiMenu)
+            continue;
+        for (QAction *action : apiMenu->actions()) {
+            if (!action->data().isValid())
+                continue;
+            DeviceActionData d = action->data().value<DeviceActionData>();
+            if (d.deviceIndex == deviceIndex && d.apiIndex == apiIndex) {
+                action->setChecked(true);
+                selectedDevice_ = d;
+                deviceButton_->setText(QStringLiteral("%1\n%2")
+                                           .arg(topAction->text())
+                                           .arg(action->text().replace(QStringLiteral(" ("),
+                                                                       QStringLiteral("\n("))));
+                updateInfo();
+                return;
+            }
+        }
     }
-
-    if (selected >= 0) {
-        deviceCombo_->setCurrentIndex(selected);
-    } else if (firstValid >= 0) {
-        deviceCombo_->setCurrentIndex(firstValid);
-    }
-
-    updating_ = false;
-    onDeviceChanged(deviceCombo_->currentIndex());
 }
 
-void TrackWidget::onApiChanged(int)
+void TrackWidget::onDeviceActionTriggered()
 {
-    if (updating_)
+    QAction *action = qobject_cast<QAction *>(sender());
+    if (!action || !action->data().isValid())
         return;
-    int apiIndex = apiCombo_->currentData().toInt();
-    track_->setApiIndex(apiIndex);
-    populateDevices();
-}
 
-void TrackWidget::onDeviceChanged(int)
-{
-    if (updating_)
-        return;
-    int deviceIndex = deviceCombo_->currentData().toInt();
-    track_->setDeviceIndex(static_cast<PaDeviceIndex>(deviceIndex));
-
-    int maxCh = 0;
-    auto devices = engine_->audioDevices(track_->apiIndex());
-    for (const auto &dev : devices) {
-        if (dev.deviceIndex == deviceIndex) {
-            maxCh = dev.maxInputChannels;
-            break;
+    // Uncheck all other device actions in this widget so only one is active.
+    for (QAction *topAction : deviceMenu_->actions()) {
+        QMenu *apiMenu = topAction->menu();
+        if (!apiMenu)
+            continue;
+        for (QAction *a : apiMenu->actions()) {
+            if (a != action && a->isChecked())
+                a->setChecked(false);
         }
     }
 
-    offsetSpin_->setMaximum(std::max(0, maxCh - 1));
-    if (track_->channelOffset() > offsetSpin_->maximum())
-        offsetSpin_->setValue(0);
-    updateInfoLabel();
+    DeviceActionData d = action->data().value<DeviceActionData>();
+    selectedDevice_ = d;
+    track_->setApiIndex(d.apiIndex);
+    track_->setDeviceIndex(d.deviceIndex);
+
+    // Update button text: API name on first line, device name on second.
+    QMenu *apiMenu = qobject_cast<QMenu *>(action->parent());
+    if (apiMenu) {
+        deviceButton_->setText(QStringLiteral("%1\n%2")
+                                   .arg(apiMenu->title())
+                                   .arg(action->text().replace(QStringLiteral(" ("),
+                                                               QStringLiteral("\n("))));
+    }
+
+    updateInfo();
 }
 
-void TrackWidget::onModeChanged(int)
+void TrackWidget::updateInfo()
 {
-    int count = modeCombo_->currentData().toInt();
+    int maxCh = selectedDevice_.maxInputChannels;
+    int first = channelSpin_->value();
+    bool stereo = stereoCheck_->isChecked();
+
+    int count = stereo ? 2 : 1;
     track_->setChannelCount(count);
-    meter_->setStereo(count == 2);
-    updateInfoLabel();
+    meter_->setStereo(stereo);
+
+    // Spin shows 1-based first channel.
+    int maxFirst = std::max(1, maxCh - (stereo ? 1 : 0));
+    channelSpin_->setMaximum(maxFirst);
+    if (first > maxFirst)
+        channelSpin_->setValue(1);
+
+    track_->setChannelOffset(channelSpin_->value() - 1);
+
+    double sr = selectedDevice_.sampleRate;
+    if (sr > 0)
+        sampleRateLabel_->setText(tr("Sample rate: %1 Hz").arg(static_cast<int>(sr)));
+    else
+        sampleRateLabel_->setText(tr("Sample rate: -"));
+
+    // Keep the model in sync with the checkbox.
+    track_->setArmed(armedCheck_->isChecked());
 }
 
 void TrackWidget::onNameChanged(const QString &text)
@@ -177,8 +215,16 @@ void TrackWidget::onNameChanged(const QString &text)
 
 void TrackWidget::onOffsetChanged(int value)
 {
-    track_->setChannelOffset(value);
-    updateInfoLabel();
+    track_->setChannelOffset(value - 1);
+    updateInfo();
+}
+
+void TrackWidget::onStereoChanged(int state)
+{
+    bool stereo = state == Qt::Checked;
+    track_->setChannelCount(stereo ? 2 : 1);
+    meter_->setStereo(stereo);
+    updateInfo();
 }
 
 void TrackWidget::onArmedChanged(int state)
@@ -189,17 +235,6 @@ void TrackWidget::onArmedChanged(int state)
 void TrackWidget::onRemoveClicked()
 {
     emit removeRequested(this);
-}
-
-void TrackWidget::updateInfoLabel()
-{
-    int mode = modeCombo_->currentData().toInt();
-    int offset = offsetSpin_->value();
-    if (mode == 2) {
-        infoLabel_->setText(tr("Rec L=%1 R=%2").arg(offset + 1).arg(offset + 2));
-    } else {
-        infoLabel_->setText(tr("Rec ch %1").arg(offset + 1));
-    }
 }
 
 void TrackWidget::refreshMeter()

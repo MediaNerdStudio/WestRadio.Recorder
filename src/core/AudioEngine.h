@@ -50,6 +50,8 @@ signals:
     void recordingStopped();
 
 private:
+    void cleanupOnStartFailure();
+
     bool initialized_ = false;
     QVector<AudioTrack *> tracks_;
     QMap<PaDeviceIndex, DeviceStream *> deviceStreams_;
