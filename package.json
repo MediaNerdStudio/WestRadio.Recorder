@@ -1,0 +1,10 @@
+{
+  "name": "westradio.recorder",
+  "private": true,
+  "version": "0.1.0",
+  "scripts": {
+    "build:backend": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/build-backend.ps1",
+    "dev": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/dev.ps1",
+    "start": "build-msvc/Release/WestRadio.Recorder.exe"
+  }
+}
