@@ -1,4 +1,5 @@
 #include <QApplication>
+#include <QIcon>
 #include <QStandardPaths>
 #include <QDir>
 #include <QFile>
@@ -157,6 +158,7 @@ int main(int argc, char *argv[])
     QApplication app(argc, argv);
     app.setApplicationName(QStringLiteral("WestRadio Recorder"));
     app.setOrganizationName(QStringLiteral("WestRadio"));
+    app.setWindowIcon(QIcon(QStringLiteral(":/AppIcon.png")));
     app.setStyle(QStringLiteral("Fusion"));
     app.setStyleSheet(QString::fromLatin1(kStyleSheet));
 

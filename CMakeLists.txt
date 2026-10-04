@@ -67,7 +67,10 @@ set(SOURCES
     ${CORE_SOURCES}
 )
 
-qt_add_executable(WestRadio.Recorder WIN32 ${SOURCES})
+qt_add_executable(WestRadio.Recorder WIN32 ${SOURCES}
+    ${CMAKE_SOURCE_DIR}/assets/app.rc
+    ${CMAKE_SOURCE_DIR}/assets/icons.qrc
+)
 
 qt_add_executable(RecorderTest tests/test_record.cpp ${CORE_SOURCES})
 
