@@ -313,13 +313,14 @@ void MainWindow::startRecording()
         engine_->addTrack(t);
     }
 
-    // Opening ASIO drivers can block the UI, so start recording on a background thread.
+    // ASIO drivers are loaded through COM and must be driven from the thread that
+    // initialised PortAudio (the GUI thread), so start synchronously here.
     // Failure is reported via AudioEngine::recordingFailed.
-    QThread *startThread = QThread::create([this]() {
-        engine_->startRecording(outputEdit_->text());
-    });
-    connect(startThread, &QThread::finished, startThread, &QObject::deleteLater);
-    startThread->start();
+    statusLabel_->setText(tr("Starting..."));
+    QApplication::setOverrideCursor(Qt::WaitCursor);
+    QApplication::processEvents();
+    engine_->startRecording(outputEdit_->text());
+    QApplication::restoreOverrideCursor();
 }
 
 void MainWindow::onRecordingStartFailed(const QString &message)
@@ -367,12 +368,11 @@ void MainWindow::stopRecording()
     statusLabel_->setText(tr("Stopping..."));
     stopButton_->setEnabled(false);
 
-    // Stopping some ASIO drivers can block for a moment, so run it off the UI thread.
-    QThread *stopThread = QThread::create([this]() {
-        engine_->stopRecording();
-    });
-    connect(stopThread, &QThread::finished, stopThread, &QObject::deleteLater);
-    stopThread->start();
+    // Same thread rule as start: ASIO must be stopped from the GUI thread.
+    QApplication::setOverrideCursor(Qt::WaitCursor);
+    QApplication::processEvents();
+    engine_->stopRecording();
+    QApplication::restoreOverrideCursor();
 }
 
 void MainWindow::onRecordingStopped()

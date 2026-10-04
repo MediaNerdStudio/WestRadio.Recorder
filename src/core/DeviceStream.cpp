@@ -126,11 +126,17 @@ bool DeviceStream::tryOpen(const PaDeviceInfo *info, double sampleRate, bool use
 
     PaError err = Pa_IsFormatSupported(&inputParams, outputPtr, sampleRate);
     if (err != paNoError) {
-        appendError(QStringLiteral("%1: %2 Hz %3 not supported: %4")
-                        .arg(devName)
-                        .arg(static_cast<int>(sampleRate))
-                        .arg(useOutput ? QStringLiteral("duplex") : QStringLiteral("input-only"))
-                        .arg(QString::fromLocal8Bit(Pa_GetErrorText(err))));
+        QString line = QStringLiteral("%1: %2 Hz %3 not supported: %4")
+                           .arg(devName)
+                           .arg(static_cast<int>(sampleRate))
+                           .arg(useOutput ? QStringLiteral("duplex") : QStringLiteral("input-only"))
+                           .arg(QString::fromLocal8Bit(Pa_GetErrorText(err)));
+        if (err == paUnanticipatedHostError) {
+            const PaHostErrorInfo *hostErr = Pa_GetLastHostErrorInfo();
+            if (hostErr && hostErr->errorText)
+                line += QStringLiteral(" [%1]").arg(QString::fromLocal8Bit(hostErr->errorText));
+        }
+        appendError(line);
         return false;
     }
 
