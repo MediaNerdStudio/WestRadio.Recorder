@@ -42,6 +42,7 @@ npm run dev
 
 - Each track selects a Windows audio API (MME, DirectSound, WASAPI, WDM-KS, ASIO), device, mono/stereo mode and a physical channel offset.
 - A single PortAudio stream is opened per device; all tracks using the same device share that stream.
+- ASIO streams automatically fall back to full-duplex mode and common sample rates if the initial open fails.
 - Every track writes a 32-bit float WAV file named `<TRACK>_<YYYY-MM-DD_HHMMSS>.wav`.
 - If MP3 is selected, the WAV is transcoded to MP3 with FFmpeg and the WAV is removed.
 - If "Also create one combined multi-channel WAV" is selected, FFmpeg `amerge` interleaves all track WAVs into a single Wave64 (`.wav`) file.

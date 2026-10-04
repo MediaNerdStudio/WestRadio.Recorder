@@ -9,4 +9,4 @@ if (-not (Test-Path $executable)) {
     if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 }
 
-& $executable
+Start-Process -FilePath $executable -Wait

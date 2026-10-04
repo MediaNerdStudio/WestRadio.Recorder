@@ -1,6 +1,8 @@
 #include "DeviceStream.h"
 #include "AudioTrack.h"
 #include <QDebug>
+#include <algorithm>
+#include <vector>
 
 DeviceStream::DeviceStream()
 {
@@ -22,15 +24,36 @@ bool DeviceStream::open(PaDeviceIndex deviceIndex, const std::vector<Subscriber>
     deviceIndex_ = deviceIndex;
     subscribers_ = subscribers;
     totalChannels_ = info->maxInputChannels;
-    sampleRate_ = info->defaultSampleRate;
 
     if (totalChannels_ <= 0)
         return false;
 
-    for (const auto &sub : subscribers_) {
-        sub.track->setSampleRate(sampleRate_);
+    // ASIO devices are picky about sample rate and often need a full-duplex
+    // stream even when only recording. Try a few common configurations.
+    std::vector<double> sampleRates;
+    if (info->defaultSampleRate > 0)
+        sampleRates.push_back(info->defaultSampleRate);
+    for (double sr : {48000.0, 44100.0, 96000.0, 88200.0, 192000.0}) {
+        if (std::find(sampleRates.begin(), sampleRates.end(), sr) == sampleRates.end())
+            sampleRates.push_back(sr);
     }
 
+    for (double sr : sampleRates) {
+        // Try input-only first (works for MME/WASAPI/DirectSound).
+        if (tryOpen(info, sr, false))
+            return true;
+        // Try full-duplex (often required for ASIO).
+        if (info->maxOutputChannels > 0 && tryOpen(info, sr, true))
+            return true;
+    }
+
+    qWarning() << "DeviceStream: failed to open device" << deviceIndex
+               << "after trying" << sampleRates.size() << "sample rates.";
+    return false;
+}
+
+bool DeviceStream::tryOpen(const PaDeviceInfo *info, double sampleRate, bool useOutput)
+{
     PaStreamParameters inputParams{};
     inputParams.device = deviceIndex_;
     inputParams.channelCount = totalChannels_;
@@ -38,19 +61,39 @@ bool DeviceStream::open(PaDeviceIndex deviceIndex, const std::vector<Subscriber>
     inputParams.suggestedLatency = info->defaultLowInputLatency;
     inputParams.hostApiSpecificStreamInfo = nullptr;
 
-    PaError err = Pa_OpenStream(&stream_,
+    PaStreamParameters outputParams{};
+    PaStreamParameters *outputPtr = nullptr;
+    int outputChannels = 0;
+    if (useOutput && info->maxOutputChannels > 0) {
+        outputParams.device = deviceIndex_;
+        outputParams.channelCount = info->maxOutputChannels;
+        outputParams.sampleFormat = paFloat32;
+        outputParams.suggestedLatency = info->defaultLowOutputLatency;
+        outputParams.hostApiSpecificStreamInfo = nullptr;
+        outputPtr = &outputParams;
+        outputChannels = info->maxOutputChannels;
+    }
+
+    PaStream *candidate = nullptr;
+    PaError err = Pa_OpenStream(&candidate,
                                 &inputParams,
-                                nullptr,
-                                sampleRate_,
+                                outputPtr,
+                                sampleRate,
                                 paFramesPerBufferUnspecified,
                                 paClipOff,
                                 paCallback,
                                 this);
     if (err != paNoError) {
-        qWarning() << "Pa_OpenStream failed:" << Pa_GetErrorText(err);
-        stream_ = nullptr;
+        qWarning() << "Pa_OpenStream failed (sr=" << sampleRate
+                   << " duplex=" << useOutput << "):" << Pa_GetErrorText(err);
         return false;
     }
+
+    stream_ = candidate;
+    sampleRate_ = sampleRate;
+    outputChannelCount_ = outputChannels;
+    for (const auto &sub : subscribers_)
+        sub.track->setSampleRate(sampleRate_);
 
     return true;
 }
@@ -78,19 +121,27 @@ bool DeviceStream::close()
         Pa_CloseStream(stream_);
         stream_ = nullptr;
     }
+    outputChannelCount_ = 0;
     return true;
 }
 
 PaDeviceIndex DeviceStream::deviceIndex() const { return deviceIndex_; }
 double DeviceStream::sampleRate() const { return sampleRate_; }
 
-int DeviceStream::paCallback(const void *inputBuffer, void *,
+int DeviceStream::paCallback(const void *inputBuffer, void *outputBuffer,
                              unsigned long framesPerBuffer,
                              const PaStreamCallbackTimeInfo *,
                              PaStreamCallbackFlags,
                              void *userData)
 {
     DeviceStream *self = static_cast<DeviceStream *>(userData);
+
+    // Keep any full-duplex ASIO output silent; we only record.
+    if (outputBuffer && self->outputChannelCount_ > 0) {
+        float *output = static_cast<float *>(outputBuffer);
+        std::fill(output, output + framesPerBuffer * self->outputChannelCount_, 0.0f);
+    }
+
     if (!inputBuffer)
         return paContinue;
 

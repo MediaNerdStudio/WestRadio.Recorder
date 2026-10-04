@@ -26,6 +26,8 @@ public:
     double sampleRate() const;
 
 private:
+    bool tryOpen(const PaDeviceInfo *info, double sampleRate, bool useOutput);
+
     static int paCallback(const void *inputBuffer, void *outputBuffer,
                           unsigned long framesPerBuffer,
                           const PaStreamCallbackTimeInfo *timeInfo,
@@ -35,6 +37,7 @@ private:
     PaStream *stream_ = nullptr;
     PaDeviceIndex deviceIndex_ = paNoDevice;
     int totalChannels_ = 0;
+    int outputChannelCount_ = 0;
     double sampleRate_ = 0.0;
     std::vector<Subscriber> subscribers_;
 };

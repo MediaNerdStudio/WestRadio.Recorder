@@ -225,7 +225,8 @@ void MainWindow::startRecording()
     }
 
     recordStart_ = QDateTime::currentDateTime();
-    setUiEnabled(false);
+    recordButton_->setEnabled(false);
+    recordButton_->setText(tr("Starting..."));
 
     AudioTrack::Format fmt = wavRadio_->isChecked() ? AudioTrack::WAV : AudioTrack::MP3;
     engine_->clearTracks();
@@ -236,6 +237,8 @@ void MainWindow::startRecording()
 
     if (!engine_->startRecording(outputEdit_->text())) {
         QMessageBox::critical(this, tr("Recording failed"), tr("Could not start one or more audio streams."));
+        recordButton_->setText(tr("Record"));
+        setUiEnabled(true);
         return;
     }
 }
@@ -246,6 +249,7 @@ void MainWindow::onRecordingStarted()
     setUiEnabled(false);
     statusLabel_->setText(tr("Recording..."));
     recordButton_->setEnabled(false);
+    recordButton_->setText(tr("Recording..."));
     stopButton_->setEnabled(true);
 }
 
@@ -298,6 +302,7 @@ void MainWindow::onPostProcessFinished()
 {
     postProcessing_ = false;
     setUiEnabled(true);
+    recordButton_->setText(tr("Record"));
 
     QStringList created;
     for (AudioTrack *t : tracks_) {

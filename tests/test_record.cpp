@@ -14,7 +14,7 @@ class RecorderTest : public QObject
 public:
     RecorderTest(QObject *parent = nullptr) : QObject(parent), engine_(new AudioEngine(this)) {}
 
-    void run(int milliseconds)
+    void run(int milliseconds, const QString &apiFilter = QString())
     {
         if (!engine_->isInitialized()) {
             std::cerr << "PortAudio not initialized" << std::endl;
@@ -30,6 +30,8 @@ public:
         int selectedApi = -1;
         PaDeviceIndex selectedDevice = paNoDevice;
         for (const auto &api : apis) {
+            if (!apiFilter.isEmpty() && !api.name.contains(apiFilter, Qt::CaseInsensitive))
+                continue;
             auto devices = engine_->audioDevices(api.apiIndex);
             for (const auto &dev : devices) {
                 std::cout << "  Device: " << dev.name.toStdString()
@@ -44,7 +46,8 @@ public:
         }
 
         if (selectedDevice == paNoDevice) {
-            std::cout << "No input devices found; skipping live test." << std::endl;
+            std::cout << "No input devices found" << (apiFilter.isEmpty() ? "" : " for API ")
+                      << apiFilter.toStdString() << "; skipping live test." << std::endl;
             qApp->exit(0);
             return;
         }
@@ -100,10 +103,13 @@ int main(int argc, char *argv[])
     QCoreApplication app(argc, argv);
 
     int duration = 3000;
+    QString apiFilter;
     if (argc > 1)
         duration = QString::fromLocal8Bit(argv[1]).toInt();
+    if (argc > 2)
+        apiFilter = QString::fromLocal8Bit(argv[2]);
 
     RecorderTest test;
-    QTimer::singleShot(0, &test, [&test, duration]() { test.run(duration); });
+    QTimer::singleShot(0, &test, [&test, duration, apiFilter]() { test.run(duration, apiFilter); });
     return app.exec();
 }
