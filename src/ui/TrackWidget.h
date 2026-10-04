@@ -36,6 +36,7 @@ public:
 
 signals:
     void removeRequested(TrackWidget *widget);
+    void configChanged();
 
 private slots:
     void onDeviceActionTriggered();

@@ -95,11 +95,12 @@ void AudioTrack::stop()
 
 void AudioTrack::pushSamples(const float *interleaved, int stride, int offset, int count, unsigned long frames)
 {
-    if (!running_.load(std::memory_order_acquire) || !ringBuffer_)
-        return;
+    // Peaks feed the live input meters, so update them even when not recording.
+    const bool capture = running_.load(std::memory_order_acquire) && ringBuffer_;
 
     std::vector<float> samples;
-    samples.reserve(static_cast<size_t>(frames) * count);
+    if (capture)
+        samples.reserve(static_cast<size_t>(frames) * count);
 
     float leftPeak = 0.0f;
     float rightPeak = 0.0f;
@@ -107,7 +108,8 @@ void AudioTrack::pushSamples(const float *interleaved, int stride, int offset, i
     for (unsigned long f = 0; f < frames; ++f) {
         for (int c = 0; c < count; ++c) {
             float s = interleaved[f * stride + offset + c];
-            samples.push_back(s);
+            if (capture)
+                samples.push_back(s);
             float a = std::abs(s);
             if (c == 0)
                 leftPeak = std::max(leftPeak, a);
@@ -124,7 +126,8 @@ void AudioTrack::pushSamples(const float *interleaved, int stride, int offset, i
     float oldRight = peakRight_.load(std::memory_order_relaxed);
     while (rightPeak > oldRight && !peakRight_.compare_exchange_weak(oldRight, rightPeak, std::memory_order_relaxed));
 
-    ringBuffer_->write(samples.data(), frames);
+    if (capture)
+        ringBuffer_->write(samples.data(), frames);
 }
 
 void AudioTrack::setFinalPath(const QString &path)

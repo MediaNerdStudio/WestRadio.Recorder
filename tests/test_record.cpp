@@ -4,6 +4,7 @@
 #include <QDir>
 #include <QFile>
 #include <QFileInfo>
+#include <QThread>
 #include <iostream>
 #include "core/AudioEngine.h"
 #include "core/AudioTrack.h"
@@ -103,9 +104,87 @@ private:
 
 #include "test_record.moc"
 
+static int countTestWavs()
+{
+    return QDir::current().entryList({QStringLiteral("TEST_*.wav")}, QDir::Files).size();
+}
+
+// "monitor" mode: verify armed tracks get live input levels without recording.
+static int runMonitorTest()
+{
+    AudioEngine engine;
+    if (!engine.isInitialized()) {
+        std::cerr << "PortAudio not initialized" << std::endl;
+        return 1;
+    }
+
+    PaDeviceIndex device = paNoDevice;
+    for (const auto &api : engine.audioApis()) {
+        if (!api.name.contains(QStringLiteral("MME"), Qt::CaseInsensitive))
+            continue;
+        for (const auto &dev : engine.audioDevices(api.apiIndex)) {
+            if (dev.maxInputChannels > 0) {
+                device = dev.deviceIndex;
+                std::cout << "Monitor device: " << dev.name.toStdString() << std::endl;
+                break;
+            }
+        }
+        if (device != paNoDevice)
+            break;
+    }
+    if (device == paNoDevice) {
+        std::cout << "No MME input device; skipping monitor test." << std::endl;
+        return 0;
+    }
+
+    AudioTrack *track = new AudioTrack();
+    track->setName(QStringLiteral("TEST"));
+    track->setDeviceIndex(device);
+    track->setChannelCount(1);
+    track->setChannelOffset(0);
+    track->setArmed(true);
+    engine.addTrack(track);
+
+    if (!engine.startMonitoring()) {
+        std::cerr << "startMonitoring failed" << std::endl;
+        return 2;
+    }
+    std::cout << "isMonitoring after start: " << engine.isMonitoring() << std::endl;
+
+    float maxPeak = 0.0f;
+    for (int i = 0; i < 20; ++i) {
+        QThread::msleep(100);
+        maxPeak = std::max(maxPeak, track->readLeftPeak());
+    }
+    std::cout << "Max peak during monitoring: " << maxPeak << std::endl;
+
+    int wavsBefore = countTestWavs();
+
+    if (!engine.startRecording(QDir::currentPath())) {
+        std::cerr << "startRecording failed:\n" << engine.lastError().toStdString() << std::endl;
+        return 3;
+    }
+    std::cout << "Recording for 1000 ms..." << std::endl;
+    QThread::msleep(1000);
+    engine.stopRecording();
+
+    std::cout << "isMonitoring after stop: " << engine.isMonitoring() << std::endl;
+    std::cout << "TEST wavs before record: " << wavsBefore
+              << ", after record: " << countTestWavs() << std::endl;
+
+    bool ok = engine.isMonitoring() && wavsBefore == 0 && countTestWavs() == 1;
+    std::cout << (ok ? "MONITOR TEST PASS" : "MONITOR TEST FAIL") << std::endl;
+    engine.stopMonitoring();
+    delete track;
+    return ok ? 0 : 4;
+}
+
 int main(int argc, char *argv[])
 {
     QCoreApplication app(argc, argv);
+
+    if (argc > 1 && QString::fromLocal8Bit(argv[1]) == QStringLiteral("monitor"))
+        return runMonitorTest();
 
     int duration = 3000;
     QString apiFilter;

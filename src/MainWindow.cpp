@@ -38,13 +38,25 @@ MainWindow::MainWindow(QWidget *parent)
     elapsedTimer_->setInterval(1000);
     connect(elapsedTimer_, &QTimer::timeout, this, &MainWindow::updateElapsed);
 
+    monitorRefreshTimer_ = new QTimer(this);
+    monitorRefreshTimer_->setSingleShot(true);
+    monitorRefreshTimer_->setInterval(300);
+    connect(monitorRefreshTimer_, &QTimer::timeout, this, [this]() {
+        engine_->refreshMonitoring();
+    });
+
+    connect(engine_, &AudioEngine::monitoringError, this, [this](const QString &msg) {
+        statusLabel_->setText(msg.section(QLatin1Char('\n'), 0, 0));
+    }, Qt::QueuedConnection);
+
     connect(engine_, &AudioEngine::recordingStarted, this, &MainWindow::onRecordingStarted);
     connect(engine_, &AudioEngine::recordingStopped, this, &MainWindow::onRecordingStopped);
     connect(engine_, &AudioEngine::recordingFailed,
             this, &MainWindow::onRecordingStartFailed, Qt::QueuedConnection);
 
     FfmpegTask::setProgressCallback([this](const QString &msg) {
-        QMetaObject::invokeMethod(this, "onPostProcessMessage", Q_ARG(QString, msg));
+        QMetaObject::invokeMethod(this, [this, msg]() { onPostProcessMessage(msg); },
+                                  Qt::QueuedConnection);
     });
 
     addTrack();
@@ -52,7 +64,10 @@ MainWindow::MainWindow(QWidget *parent)
 
 MainWindow::~MainWindow()
 {
+    FfmpegTask::setProgressCallback(nullptr);
     engine_->stopRecording();
+    if (postProcessThread_ && postProcessThread_->isRunning())
+        postProcessThread_->wait(15000);
     for (AudioTrack *t : tracks_)
         delete t;
 }
@@ -221,13 +236,18 @@ void MainWindow::addTrack()
 
     auto *widget = new TrackWidget(engine_, track, tracksContainer_);
     connect(widget, &TrackWidget::removeRequested, this, &MainWindow::removeTrackWidget);
+    connect(widget, &TrackWidget::configChanged, this, [this]() {
+        monitorRefreshTimer_->start();
+    });
 
     tracks_.append(track);
     trackWidgets_.append(widget);
+    engine_->addTrack(track);
     tracksLayout_->insertWidget(tracksLayout_->indexOf(addTrackButton_), widget);
 
     renumberTracks();
     updateTrackSummary();
+    monitorRefreshTimer_->start();
 }
 
 void MainWindow::removeTrackWidget(TrackWidget *widget)
@@ -250,6 +270,7 @@ void MainWindow::removeTrackWidget(TrackWidget *widget)
 
     renumberTracks();
     updateTrackSummary();
+    monitorRefreshTimer_->start();
 }
 
 void MainWindow::onBrowseOutput()
@@ -307,11 +328,10 @@ void MainWindow::startRecording()
     recordButton_->setText(tr("Starting..."));
 
     AudioTrack::Format fmt = wavRadio_->isChecked() ? AudioTrack::WAV : AudioTrack::MP3;
-    engine_->clearTracks();
-    for (AudioTrack *t : tracks_) {
+    for (AudioTrack *t : tracks_)
         t->setFormat(fmt);
-        engine_->addTrack(t);
-    }
+
+    monitorRefreshTimer_->stop();
 
     // ASIO drivers are loaded through COM and must be driven from the thread that
     // initialised PortAudio (the GUI thread), so start synchronously here.
@@ -377,6 +397,9 @@ void MainWindow::stopRecording()
 
 void MainWindow::onRecordingStopped()
 {
+    if (!recording_)
+        return;
+
     recording_ = false;
     stopping_ = false;
     elapsedTimer_->stop();
@@ -453,9 +476,18 @@ void MainWindow::postProcess()
     };
     QVector<TrackInfo> armedTracks;
     for (AudioTrack *t : tracks_) {
-        if (!t->isArmed())
+        if (!t->isArmed() || t->currentWavPath().isEmpty())
             continue;
         armedTracks.append({t, t->currentWavPath(), t->channelCount(), static_cast<int>(t->sampleRate())});
+    }
+
+    // Nothing was actually captured (e.g. spurious recordingStopped) — skip.
+    if (armedTracks.isEmpty()) {
+        postProcessing_ = false;
+        setUiEnabled(true);
+        recordButton_->setText(tr("\u25cf REC"));
+        statusLabel_->setText(tr("Ready"));
+        return;
     }
 
     // Run FFmpeg work on a background thread so the UI stays responsive.
@@ -500,9 +532,15 @@ void MainWindow::postProcess()
             }
         }
 
-        QMetaObject::invokeMethod(this, "onPostProcessFinished");
+        QMetaObject::invokeMethod(this, [this]() { onPostProcessFinished(); },
+                                  Qt::QueuedConnection);
     });
 
+    postProcessThread_ = worker;
+    connect(worker, &QThread::finished, this, [this, worker]() {
+        if (postProcessThread_ == worker)
+            postProcessThread_ = nullptr;
+    }, Qt::QueuedConnection);
     connect(worker, &QThread::finished, worker, &QObject::deleteLater);
     worker->start();
 }
@@ -510,6 +548,7 @@ void MainWindow::postProcess()
 void MainWindow::closeEvent(QCloseEvent *event)
 {
     stopRecording();
+    engine_->stopMonitoring();
 
     // Give the stop thread a moment to finish if a recording is active.
     if (recording_ || stopping_ || postProcessing_) {
@@ -521,6 +560,9 @@ void MainWindow::closeEvent(QCloseEvent *event)
         timer.start(3000);
         loop.exec();
     }
+
+    if (postProcessThread_ && postProcessThread_->isRunning())
+        postProcessThread_->wait(15000);
 
     event->accept();
 }

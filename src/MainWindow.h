@@ -73,6 +73,8 @@ private:
 
     QTimer *meterTimer_;
     QTimer *elapsedTimer_;
+    QTimer *monitorRefreshTimer_;
+    QThread *postProcessThread_ = nullptr;
     QDateTime recordStart_;
     bool recording_ = false;
     bool stopping_ = false;

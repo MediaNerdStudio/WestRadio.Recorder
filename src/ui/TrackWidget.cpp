@@ -222,6 +222,7 @@ void TrackWidget::onDeviceActionTriggered()
     track_->setDeviceIndex(d.deviceIndex);
     updateDeviceButton();
     updateInfo();
+    emit configChanged();
 }
 
 void TrackWidget::updateInfo()
@@ -261,6 +262,7 @@ void TrackWidget::onOffsetChanged(int value)
 {
     track_->setChannelOffset(value - 1);
     updateInfo();
+    emit configChanged();
 }
 
 void TrackWidget::onStereoChanged(int state)
@@ -269,11 +271,13 @@ void TrackWidget::onStereoChanged(int state)
     track_->setChannelCount(stereo ? 2 : 1);
     meter_->setStereo(stereo);
     updateInfo();
+    emit configChanged();
 }
 
 void TrackWidget::onArmedChanged(bool checked)
 {
     track_->setArmed(checked);
+    emit configChanged();
 }
 
 void TrackWidget::onRemoveClicked()

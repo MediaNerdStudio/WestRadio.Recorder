@@ -44,6 +44,9 @@ npm run dev
 - A single PortAudio stream is opened per device; all tracks using the same device share that stream.
 - ASIO streams open only the channel range the tracks need (PortAudio channel selectors), negotiate a supported sample rate (device default first, then 48k/44.1k/96k/88.2k/192k) and fall back to full-duplex if input-only fails. PortAudio allows only one ASIO device open at a time.
 - Track WAV writers are created after the stream has settled on its sample rate, so the WAV header always matches the capture rate.
+- Armed tracks are monitored live: the engine keeps input streams open (no writers) so meters move before recording; monitoring restarts automatically after a recording stops. Monitoring errors go to the status bar, not a dialog.
+- All PortAudio start/stop calls happen on the GUI thread: ASIO drivers are COM objects bound to the thread that initialised PortAudio, so opening them from a worker thread fails with "Unanticipated host error".
+- `RecorderTest.exe monitor` exercises the monitoring → record → monitoring cycle headlessly.
 - Recording-start failures are reported with the PortAudio error text in a dialog; warnings are also appended to `%LOCALAPPDATA%\WestRadio.Recorder\recorder.log`.
 - UI is a dark Fairlight-style console: vertical 96px channel strips with segmented meters and a dB scale; `RecorderTest.exe <ms> [apiFilter] [deviceFilter] [channelOffset]` for headless checks.
 - Every track writes a 32-bit float WAV file named `<TRACK>_<YYYY-MM-DD_HHMMSS>.wav`.
