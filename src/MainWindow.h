@@ -19,6 +19,7 @@ class QHBoxLayout;
 class QVBoxLayout;
 class QTimer;
 class QAction;
+class QMenu;
 
 class MainWindow : public QMainWindow
 {
@@ -48,6 +49,7 @@ private slots:
 
 protected:
     void closeEvent(QCloseEvent *event) override;
+    void resizeEvent(QResizeEvent *event) override;
 
 private:
     void buildUi();
@@ -64,16 +66,18 @@ private:
     void updateTitle();
     void updateStartupAction();
     void updateOutputPathAction();
+    void setStatus(const QString &text);
 
     AudioEngine *engine_;
     QVector<AudioTrack *> tracks_;
     QVector<TrackWidget *> trackWidgets_;
 
     QString outputDir_;
+    QString statusText_;
     QAction *wavAction_;
     QAction *mp3Action_;
     QAction *outputPathAction_;
-    QPushButton *optionsButton_;
+    QMenu *optionsMenu_;
     QPushButton *addTrackButton_;
     QPushButton *recordButton_;
     QPushButton *stopButton_;

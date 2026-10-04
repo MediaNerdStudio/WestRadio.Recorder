@@ -55,7 +55,7 @@ MainWindow::MainWindow(QWidget *parent, const QString &configPath)
     });
 
     connect(engine_, &AudioEngine::monitoringError, this, [this](const QString &msg) {
-        statusLabel_->setText(msg.section(QLatin1Char('\n'), 0, 0));
+        setStatus(msg.section(QLatin1Char('\n'), 0, 0));
     }, Qt::QueuedConnection);
 
     connect(engine_, &AudioEngine::recordingStarted, this, &MainWindow::onRecordingStarted);
@@ -89,17 +89,17 @@ MainWindow::MainWindow(QWidget *parent, const QString &configPath)
             applyConfig(cfg, &warnings);
             currentConfigPath_ = startupPath;
             if (!warnings.isEmpty()) {
-                statusLabel_->setText(warnings.first());
+                setStatus(warnings.first());
                 QMessageBox::warning(this, tr("Config loaded with warnings"),
                                      warnings.join(QLatin1Char('\n')));
             }
         } else {
-            statusLabel_->setText(tr("Failed to load startup config: %1").arg(error));
+            setStatus(tr("Failed to load startup config: %1").arg(error));
             addTrack();
         }
     } else {
         if (!startupPath.isEmpty())
-            statusLabel_->setText(tr("Startup config not found: %1").arg(startupPath));
+            setStatus(tr("Startup config not found: %1").arg(startupPath));
         addTrack();
     }
 
@@ -152,6 +152,39 @@ void MainWindow::buildUi()
     fileMenu->addSeparator();
     fileMenu->addAction(tr("E&xit"), this, &QWidget::close);
 
+    // Options menu: format, output folder, arm/disarm.
+    outputDir_ = QStandardPaths::writableLocation(QStandardPaths::MusicLocation);
+
+    optionsMenu_ = menuBar()->addMenu(tr("&Options"));
+    QMenu *formatMenu = optionsMenu_->addMenu(tr("Format"));
+    auto *formatGroup = new QActionGroup(this);
+    wavAction_ = formatMenu->addAction(tr("WAV"));
+    wavAction_->setCheckable(true);
+    wavAction_->setChecked(true);
+    formatGroup->addAction(wavAction_);
+    mp3Action_ = formatMenu->addAction(tr("MP3 (320 kbps)"));
+    mp3Action_->setCheckable(true);
+    formatGroup->addAction(mp3Action_);
+    connect(wavAction_, &QAction::toggled, this, &MainWindow::markDirty);
+    connect(mp3Action_, &QAction::toggled, this, &MainWindow::markDirty);
+
+    optionsMenu_->addAction(tr("Output folder\u2026"), this, &MainWindow::onBrowseOutput);
+    outputPathAction_ = optionsMenu_->addAction(QString());
+    outputPathAction_->setEnabled(false);
+    updateOutputPathAction();
+
+    optionsMenu_->addSeparator();
+    optionsMenu_->addAction(tr("Arm all"), this, [this]() {
+        for (auto *w : trackWidgets_)
+            w->setArmed(true);
+        updateTrackSummary();
+    });
+    optionsMenu_->addAction(tr("Disarm all"), this, [this]() {
+        for (auto *w : trackWidgets_)
+            w->setArmed(false);
+        updateTrackSummary();
+    });
+
     auto *central = new QWidget(this);
     auto *mainLayout = new QVBoxLayout(central);
     mainLayout->setContentsMargins(0, 0, 0, 0);
@@ -173,12 +206,14 @@ void MainWindow::buildUi()
         "QPushButton:hover { background-color: #f0433a; }"
         "QPushButton:disabled { background-color: #5a2725; color: #8a9099; }"));
     recordButton_->setMinimumHeight(28);
+    recordButton_->setMinimumWidth(0);
     connect(recordButton_, &QPushButton::clicked, this, &MainWindow::startRecording);
     topBar->addWidget(recordButton_);
 
     stopButton_ = new QPushButton(tr("\u25a0 Stop"), this);
     stopButton_->setEnabled(false);
     stopButton_->setMinimumHeight(28);
+    stopButton_->setMinimumWidth(0);
     connect(stopButton_, &QPushButton::clicked, this, &MainWindow::stopRecording);
     topBar->addWidget(stopButton_);
 
@@ -187,49 +222,11 @@ void MainWindow::buildUi()
     monoFont.setStyleHint(QFont::Monospace);
     monoFont.setPointSize(14);
     elapsedLabel_->setFont(monoFont);
+    elapsedLabel_->setFixedWidth(
+        QFontMetrics(monoFont).horizontalAdvance(QStringLiteral("00:00:00")) + 12);
     topBar->addWidget(elapsedLabel_);
 
     topBar->addStretch();
-
-    // Options menu: format, output folder, arm/disarm.
-    outputDir_ = QStandardPaths::writableLocation(QStandardPaths::MusicLocation);
-
-    auto *optionsButton = new QPushButton(tr("Options \u25be"), this);
-    optionsButton->setFlat(true);
-    optionsButton_ = optionsButton;
-    auto *optionsMenu = new QMenu(optionsButton);
-
-    QMenu *formatMenu = optionsMenu->addMenu(tr("Format"));
-    auto *formatGroup = new QActionGroup(this);
-    wavAction_ = formatMenu->addAction(tr("WAV"));
-    wavAction_->setCheckable(true);
-    wavAction_->setChecked(true);
-    formatGroup->addAction(wavAction_);
-    mp3Action_ = formatMenu->addAction(tr("MP3 (320 kbps)"));
-    mp3Action_->setCheckable(true);
-    formatGroup->addAction(mp3Action_);
-    connect(wavAction_, &QAction::toggled, this, &MainWindow::markDirty);
-    connect(mp3Action_, &QAction::toggled, this, &MainWindow::markDirty);
-
-    optionsMenu->addAction(tr("Output folder\u2026"), this, &MainWindow::onBrowseOutput);
-    outputPathAction_ = optionsMenu->addAction(QString());
-    outputPathAction_->setEnabled(false);
-    updateOutputPathAction();
-
-    optionsMenu->addSeparator();
-    optionsMenu->addAction(tr("Arm all"), this, [this]() {
-        for (auto *w : trackWidgets_)
-            w->setArmed(true);
-        updateTrackSummary();
-    });
-    optionsMenu->addAction(tr("Disarm all"), this, [this]() {
-        for (auto *w : trackWidgets_)
-            w->setArmed(false);
-        updateTrackSummary();
-    });
-
-    optionsButton->setMenu(optionsMenu);
-    topBar->addWidget(optionsButton);
 
     mainLayout->addWidget(toolbar);
 
@@ -238,6 +235,7 @@ void MainWindow::buildUi()
     tracks_.clear();
 
     tracksContainer_ = new QWidget(this);
+    tracksContainer_->setMinimumWidth(0);
     tracksContainer_->setStyleSheet(QStringLiteral("background-color: #15171c;"));
     tracksLayout_ = new QHBoxLayout(tracksContainer_);
     tracksLayout_->setAlignment(Qt::AlignLeft | Qt::AlignTop);
@@ -256,6 +254,8 @@ void MainWindow::buildUi()
     tracksLayout_->addWidget(addTrackButton_);
 
     scrollArea_ = new QScrollArea(this);
+    scrollArea_->setMinimumWidth(0);
+    scrollArea_->setSizePolicy(QSizePolicy::Ignored, QSizePolicy::Expanding);
     scrollArea_->setWidgetResizable(true);
     scrollArea_->setHorizontalScrollBarPolicy(Qt::ScrollBarAsNeeded);
     scrollArea_->setVerticalScrollBarPolicy(Qt::ScrollBarAlwaysOff);
@@ -271,15 +271,34 @@ void MainWindow::buildUi()
     statusLayout->setContentsMargins(10, 4, 10, 4);
     statusLabel_ = new QLabel(tr("Ready"), this);
     statusLabel_->setProperty("dim", true);
+    statusLabel_->setSizePolicy(QSizePolicy::Ignored, QSizePolicy::Preferred);
+    statusText_ = statusLabel_->text();
     statusLayout->addWidget(statusLabel_, 1);
     trackSummaryLabel_ = new QLabel(this);
     trackSummaryLabel_->setProperty("dim", true);
+    trackSummaryLabel_->setSizePolicy(QSizePolicy::Ignored, QSizePolicy::Preferred);
     statusLayout->addWidget(trackSummaryLabel_);
     mainLayout->addWidget(statusBar);
 
     setCentralWidget(central);
-    setMinimumSize(700, 500);
+    setMinimumSize(340, 420);
     resize(1400, 800);
+}
+
+void MainWindow::setStatus(const QString &text)
+{
+    statusText_ = text;
+    statusLabel_->setToolTip(text);
+    statusLabel_->setText(QFontMetrics(statusLabel_->font())
+                              .elidedText(text, Qt::ElideMiddle,
+                                          std::max(0, statusLabel_->width() - 4)));
+}
+
+void MainWindow::resizeEvent(QResizeEvent *event)
+{
+    QMainWindow::resizeEvent(event);
+    if (statusLabel_)
+        setStatus(statusText_);
 }
 
 void MainWindow::updateTitle()
@@ -494,7 +513,7 @@ bool MainWindow::saveConfigTo(const QString &path)
     dirty_ = false;
     updateTitle();
     updateStartupAction();
-    statusLabel_->setText(tr("Saved config: %1").arg(QDir::toNativeSeparators(path)));
+    setStatus(tr("Saved config: %1").arg(QDir::toNativeSeparators(path)));
     return true;
 }
 
@@ -513,7 +532,7 @@ void MainWindow::newConfig()
     dirty_ = false;
     updateTitle();
     updateStartupAction();
-    statusLabel_->setText(tr("Ready"));
+    setStatus(tr("Ready"));
 }
 
 void MainWindow::openConfig()
@@ -540,11 +559,11 @@ void MainWindow::openConfig()
     updateTitle();
     updateStartupAction();
     if (!warnings.isEmpty()) {
-        statusLabel_->setText(warnings.first());
+        setStatus(warnings.first());
         QMessageBox::warning(this, tr("Config loaded with warnings"),
                              warnings.join(QLatin1Char('\n')));
     } else {
-        statusLabel_->setText(tr("Loaded config: %1").arg(QDir::toNativeSeparators(path)));
+        setStatus(tr("Loaded config: %1").arg(QDir::toNativeSeparators(path)));
     }
 }
 
@@ -640,7 +659,7 @@ void MainWindow::startRecording()
     // ASIO drivers are loaded through COM and must be driven from the thread that
     // initialised PortAudio (the GUI thread), so start synchronously here.
     // Failure is reported via AudioEngine::recordingFailed.
-    statusLabel_->setText(tr("Starting..."));
+    setStatus(tr("Starting..."));
     QApplication::setOverrideCursor(Qt::WaitCursor);
     QApplication::processEvents();
     engine_->startRecording(outputDir_);
@@ -652,7 +671,7 @@ void MainWindow::onRecordingStartFailed(const QString &message)
     if (!recording_)
         recordButton_->setText(tr("\u25cf REC"));
     setUiEnabled(true);
-    statusLabel_->setText(message.section(QLatin1Char('\n'), 0, 0));
+    setStatus(message.section(QLatin1Char('\n'), 0, 0));
     QMessageBox box(QMessageBox::Critical, tr("Recording failed"),
                     tr("Could not start recording."), QMessageBox::Ok, this);
     box.setDetailedText(message);
@@ -663,7 +682,7 @@ void MainWindow::onRecordingStarted()
 {
     recording_ = true;
     setUiEnabled(false);
-    statusLabel_->setText(tr("Recording..."));
+    setStatus(tr("Recording..."));
     recordButton_->setEnabled(false);
     recordButton_->setText(tr("Recording..."));
     stopButton_->setEnabled(true);
@@ -689,7 +708,7 @@ void MainWindow::stopRecording()
         return;
 
     stopping_ = true;
-    statusLabel_->setText(tr("Stopping..."));
+    setStatus(tr("Stopping..."));
     stopButton_->setEnabled(false);
 
     // Same thread rule as start: ASIO must be stopped from the GUI thread.
@@ -710,7 +729,7 @@ void MainWindow::onRecordingStopped()
     elapsedLabel_->setText(QStringLiteral("00:00:00"));
     recordButton_->setEnabled(false);
     stopButton_->setEnabled(false);
-    statusLabel_->setText(tr("Encoding / finishing..."));
+    setStatus(tr("Encoding / finishing..."));
 
     postProcess();
 }
@@ -718,7 +737,7 @@ void MainWindow::onRecordingStopped()
 void MainWindow::setUiEnabled(bool enabled)
 {
     addTrackButton_->setEnabled(enabled);
-    optionsButton_->setEnabled(enabled);
+    optionsMenu_->setEnabled(enabled);
     newAction_->setEnabled(enabled);
     openAction_->setEnabled(enabled);
     recordButton_->setEnabled(enabled);
@@ -735,7 +754,7 @@ void MainWindow::updateMeters()
 
 void MainWindow::onPostProcessMessage(const QString &message)
 {
-    statusLabel_->setText(message);
+    setStatus(message);
 }
 
 void MainWindow::onPostProcessFinished()
@@ -752,9 +771,9 @@ void MainWindow::onPostProcessFinished()
     }
 
     if (!created.isEmpty())
-        statusLabel_->setText(tr("Saved: %1").arg(created.join(QStringLiteral("; "))));
+        setStatus(tr("Saved: %1").arg(created.join(QStringLiteral("; "))));
     else
-        statusLabel_->setText(tr("Ready"));
+        setStatus(tr("Ready"));
 }
 
 void MainWindow::postProcess()
@@ -784,7 +803,7 @@ void MainWindow::postProcess()
         postProcessing_ = false;
         setUiEnabled(true);
         recordButton_->setText(tr("\u25cf REC"));
-        statusLabel_->setText(tr("Ready"));
+        setStatus(tr("Ready"));
         return;
     }
 
