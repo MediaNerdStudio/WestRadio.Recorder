@@ -1,4 +1,5 @@
 #include "MainWindow.h"
+#include "Version.h"
 #include "ui/TrackWidget.h"
 #include "core/AudioEngine.h"
 #include "core/AudioTrack.h"
@@ -185,6 +186,19 @@ void MainWindow::buildUi()
         updateTrackSummary();
     });
 
+    QMenu *helpMenu = menuBar()->addMenu(tr("&Help"));
+    helpMenu->addAction(tr("&About"), this, [this]() {
+        QString ffmpeg = FfmpegTask::ffmpegPath();
+        QMessageBox::about(this, tr("About WestRadio Recorder"),
+            tr("<b>WestRadio Recorder %1</b><br/>"
+               "Qt %2<br/>PortAudio: %3<br/>FFmpeg: %4")
+                .arg(QStringLiteral(WR_VERSION_STR))
+                .arg(QStringLiteral(QT_VERSION_STR))
+                .arg(QString::fromLocal8Bit(Pa_GetVersionText()))
+                .arg(ffmpeg.isEmpty() ? tr("not found")
+                                      : QDir::toNativeSeparators(ffmpeg)));
+    });
+
     auto *central = new QWidget(this);
     auto *mainLayout = new QVBoxLayout(central);
     mainLayout->setContentsMargins(0, 0, 0, 0);
@@ -306,7 +320,8 @@ void MainWindow::updateTitle()
     QString name = currentConfigPath_.isEmpty()
         ? tr("Untitled")
         : QFileInfo(currentConfigPath_).fileName();
-    setWindowTitle(tr("WestRadio Recorder \u2014 %1%2")
+    setWindowTitle(tr("WestRadio Recorder %1 \u2014 %2%3")
+                       .arg(QStringLiteral(WR_VERSION_STR))
                        .arg(name)
                        .arg(dirty_ ? QStringLiteral(" *") : QString()));
 }

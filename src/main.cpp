@@ -8,6 +8,7 @@
 #include <QtGlobal>
 #include <QCommandLineParser>
 #include "MainWindow.h"
+#include "Version.h"
 
 static const char *kStyleSheet = R"(
 QMainWindow, QWidget {
@@ -158,6 +159,7 @@ int main(int argc, char *argv[])
     QApplication app(argc, argv);
     app.setApplicationName(QStringLiteral("WestRadio Recorder"));
     app.setOrganizationName(QStringLiteral("WestRadio"));
+    app.setApplicationVersion(QStringLiteral(WR_VERSION_STR));
     app.setWindowIcon(QIcon(QStringLiteral(":/AppIcon.png")));
     app.setStyle(QStringLiteral("Fusion"));
     app.setStyleSheet(QString::fromLatin1(kStyleSheet));

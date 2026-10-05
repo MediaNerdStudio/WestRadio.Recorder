@@ -5,6 +5,7 @@
   "scripts": {
     "build:backend": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/build-backend.ps1",
     "dev": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/dev.ps1",
+    "package": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/package.ps1",
     "start": "build-msvc/Release/WestRadio.Recorder.exe"
   }
 }

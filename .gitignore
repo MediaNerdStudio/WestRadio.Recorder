@@ -10,3 +10,4 @@ Development/*.mp3
 Development/*.png
 *.wav
 *.mp3
+dist/

@@ -1,0 +1,33 @@
+#pragma code_page(65001)
+#include <winres.h>
+
+IDI_ICON1 ICON "@CMAKE_SOURCE_DIR@/assets/app.ico"
+
+VS_VERSION_INFO VERSIONINFO
+FILEVERSION @PROJECT_VERSION_MAJOR@,@PROJECT_VERSION_MINOR@,@PROJECT_VERSION_PATCH@,0
+PRODUCTVERSION @PROJECT_VERSION_MAJOR@,@PROJECT_VERSION_MINOR@,@PROJECT_VERSION_PATCH@,0
+FILEFLAGSMASK 0x3fL
+FILEFLAGS 0x0L
+FILEOS 0x4L
+FILETYPE 0x1L
+FILESUBTYPE 0x0L
+BEGIN
+    BLOCK "StringFileInfo"
+    BEGIN
+        BLOCK "040904b0"
+        BEGIN
+            VALUE "CompanyName", "WestRadio"
+            VALUE "FileDescription", "WestRadio Recorder"
+            VALUE "FileVersion", "@PROJECT_VERSION@"
+            VALUE "InternalName", "WestRadio.Recorder"
+            VALUE "LegalCopyright", "© 2026 WestRadio"
+            VALUE "OriginalFilename", "WestRadio.Recorder.exe"
+            VALUE "ProductName", "WestRadio Recorder"
+            VALUE "ProductVersion", "@PROJECT_VERSION@"
+        END
+    END
+    BLOCK "VarFileInfo"
+    BEGIN
+        VALUE "Translation", 0x409, 1200
+    END
+END

@@ -1,6 +1,6 @@
 cmake_minimum_required(VERSION 3.24)
 set(CMAKE_POLICY_VERSION_MINIMUM 3.5 CACHE STRING "" FORCE)
-project(WestRadio.Recorder VERSION 0.1.0 LANGUAGES CXX C)
+project(WestRadio.Recorder VERSION 0.1.0 LANGUAGES C CXX)
 
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -67,14 +67,17 @@ set(SOURCES
     ${CORE_SOURCES}
 )
 
+configure_file(src/Version.h.in ${CMAKE_BINARY_DIR}/generated/Version.h)
+configure_file(assets/app.rc.in ${CMAKE_BINARY_DIR}/generated/app.rc)
+
 qt_add_executable(WestRadio.Recorder WIN32 ${SOURCES}
-    ${CMAKE_SOURCE_DIR}/assets/app.rc
+    ${CMAKE_BINARY_DIR}/generated/app.rc
     ${CMAKE_SOURCE_DIR}/assets/icons.qrc
 )
 
 qt_add_executable(RecorderTest tests/test_record.cpp ${CORE_SOURCES})
 
-target_include_directories(WestRadio.Recorder PRIVATE src)
+target_include_directories(WestRadio.Recorder PRIVATE src ${CMAKE_BINARY_DIR}/generated)
 
 target_link_libraries(WestRadio.Recorder PRIVATE
     Qt6::Core
@@ -91,7 +94,7 @@ set_target_properties(WestRadio.Recorder PROPERTIES
     WIN32_EXECUTABLE TRUE
 )
 
-target_include_directories(RecorderTest PRIVATE src)
+target_include_directories(RecorderTest PRIVATE src ${CMAKE_BINARY_DIR}/generated)
 target_link_libraries(RecorderTest PRIVATE
     Qt6::Core
     portaudio_static
