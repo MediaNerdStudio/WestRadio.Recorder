@@ -9,6 +9,9 @@
 #include "core/AudioEngine.h"
 #include "core/AudioTrack.h"
 #include "core/RecorderConfig.h"
+#include "core/FfmpegTask.h"
+#include "core/WavStreamWriter.h"
+#include <cmath>
 
 class RecorderTest : public QObject
 {
@@ -249,6 +252,41 @@ static int runConfigTest()
     return ok ? 0 : 4;
 }
 
+// "ffmpeg" mode: resolve ffmpegPath() and run a real sine WAV -> MP3 encode.
+static int runFfmpegTest()
+{
+    QString ffmpeg = FfmpegTask::ffmpegPath();
+    std::cout << "ffmpegPath: " << (ffmpeg.isEmpty() ? "<not found>" : ffmpeg.toStdString())
+              << std::endl;
+    if (ffmpeg.isEmpty())
+        return 2;
+
+    QString wav = QDir::current().filePath(QStringLiteral("TEST_FFMPEG.wav"));
+    QString mp3 = QDir::current().filePath(QStringLiteral("TEST_FFMPEG.mp3"));
+
+    {
+        WavStreamWriter writer;
+        if (!writer.open(wav, 48000, 1)) {
+            std::cerr << "could not open test wav" << std::endl;
+            return 3;
+        }
+        std::vector<float> buf(480);
+        for (int i = 0; i < 48000; i += 480) {
+            for (int j = 0; j < 480; ++j)
+                buf[j] = 0.5f * std::sin(2.0f * 3.14159265f * 440.0f * (i + j) / 48000.0f);
+            writer.write(buf.data(), 480);
+        }
+        writer.close();
+    }
+
+    bool ok = FfmpegTask::encodeToMp3(wav, mp3, 1)
+              && QFile::exists(mp3) && QFileInfo(mp3).size() > 0;
+    std::cout << (ok ? "FFMPEG TEST PASS" : "FFMPEG TEST FAIL") << std::endl;
+    QFile::remove(wav);
+    QFile::remove(mp3);
+    return ok ? 0 : 4;
+}
+
 int main(int argc, char *argv[])
 {
     QCoreApplication app(argc, argv);
@@ -257,6 +295,8 @@ int main(int argc, char *argv[])
         return runMonitorTest();
     if (argc > 1 && QString::fromLocal8Bit(argv[1]) == QStringLiteral("config"))
         return runConfigTest();
+    if (argc > 1 && QString::fromLocal8Bit(argv[1]) == QStringLiteral("ffmpeg"))
+        return runFfmpegTest();
 
     int duration = 3000;
     QString apiFilter;

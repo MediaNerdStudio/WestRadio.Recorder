@@ -8,7 +8,7 @@ Native Windows multitrack audio recorder built with C++20, Qt 6 and PortAudio.
 - Qt 6.5+ (tested with 6.11.2 MSVC 2022 64-bit)
 - Visual Studio 2022 / Build Tools C++ workload
 - CMake 3.24+
-- FFmpeg on PATH or at `C:\ffmpeg\bin\ffmpeg.exe` (used for MP3 encoding)
+- FFmpeg is bundled into release packages by `scripts/package.ps1` (downloaded to `tools/ffmpeg/`, cached). For dev builds it is found at `<exe>/ffmpeg/ffmpeg.exe`, on PATH, or at `C:\ffmpeg\bin\ffmpeg.exe` (used for MP3 encoding)
 
 The CMake build downloads PortAudio and a mirror of the Steinberg ASIO SDK automatically via `FetchContent`, so ASIO support is included without any manual SDK steps.
 

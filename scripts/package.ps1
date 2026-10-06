@@ -52,6 +52,42 @@ if (-not (Test-Path "$stageDir\msvcp140.dll")) {
     }
 }
 
+# Provision FFmpeg so the app is fully self-contained (cached in tools/ffmpeg).
+$toolsDir = "$root\tools\ffmpeg"
+New-Item -ItemType Directory -Path $toolsDir -Force | Out-Null
+if ($env:FFMPEG_EXE -and (Test-Path $env:FFMPEG_EXE)) {
+    Copy-Item $env:FFMPEG_EXE "$toolsDir\ffmpeg.exe" -Force
+    $licSrc = Join-Path (Split-Path -Parent $env:FFMPEG_EXE) 'LICENSE'
+    if (Test-Path $licSrc) { Copy-Item $licSrc "$toolsDir\LICENSE.txt" -Force }
+    Write-Host "Using FFMPEG_EXE override: $env:FFMPEG_EXE"
+} elseif (-not (Test-Path "$toolsDir\ffmpeg.exe")) {
+    $url = 'https://www.gyan.dev/ffmpeg/builds/ffmpeg-release-essentials.zip'
+    $dl = "$env:TEMP\ffmpeg-release-essentials.zip"
+    Write-Host "Downloading $url"
+    Invoke-WebRequest -Uri $url -OutFile $dl
+    $extractDir = "$env:TEMP\ffmpeg-essentials-extract"
+    if (Test-Path $extractDir) { Remove-Item $extractDir -Recurse -Force }
+    Expand-Archive -Path $dl -DestinationPath $extractDir
+    $bin = Get-ChildItem $extractDir -Recurse -Filter ffmpeg.exe | Select-Object -First 1
+    if (-not $bin) { throw "ffmpeg.exe not found in downloaded archive" }
+    Copy-Item $bin.FullName "$toolsDir\ffmpeg.exe"
+    $lic = Get-ChildItem $extractDir -Recurse -Include LICENSE,LICENSE.txt,GPLv3.txt -File |
+        Select-Object -First 1
+    if ($lic) { Copy-Item $lic.FullName "$toolsDir\LICENSE.txt" }
+    & "$toolsDir\ffmpeg.exe" -version | Select-Object -First 1 |
+        Set-Content "$toolsDir\VERSION.txt" -Encoding UTF8
+    Remove-Item $dl, $extractDir -Recurse -Force -ErrorAction SilentlyContinue
+}
+if (-not (Test-Path "$toolsDir\ffmpeg.exe")) { throw "Failed to provision ffmpeg.exe" }
+if (-not (Test-Path "$toolsDir\LICENSE.txt")) {
+    Set-Content "$toolsDir\LICENSE.txt" -Encoding UTF8 `
+        'FFmpeg: GPL v3 (gyan.dev essentials build). Source: https://ffmpeg.org'
+}
+New-Item -ItemType Directory -Path "$stageDir\ffmpeg" -Force | Out-Null
+Copy-Item "$toolsDir\ffmpeg.exe" "$stageDir\ffmpeg\ffmpeg.exe"
+Copy-Item "$toolsDir\LICENSE.txt" "$stageDir\ffmpeg\LICENSE.txt"
+Write-Host "Bundled ffmpeg.exe"
+
 @'
 WestRadio Recorder
 ==================
@@ -61,8 +97,7 @@ Native Windows multitrack audio recorder (Qt 6 + PortAudio, ASIO support).
 Requirements
 ------------
 - Windows 10/11 x64
-- For MP3 output: FFmpeg on PATH or at C:\ffmpeg\bin\ffmpeg.exe
-  (WAV recording works without it)
+- FFmpeg is bundled (ffmpeg\ffmpeg.exe) - MP3 encoding works out of the box.
 
 Running
 -------
@@ -98,8 +133,10 @@ Steinberg ASIO SDK (mirror: github.com/audiosdk/asio)
     Steinberg ASIO licensing agreement; see the SDK for details.
 
 FFmpeg
-    Optional runtime dependency for MP3 encoding (invoked as an external
-    executable, not linked). https://ffmpeg.org/legal.html
+    Bundled as ffmpeg\ffmpeg.exe (gyan.dev "essentials" build, GPL v3).
+    Invoked by WestRadio Recorder as a separate process for MP3 encoding.
+    Build version is recorded in tools\ffmpeg\VERSION.txt of the source repo.
+    https://ffmpeg.org/legal.html - source: https://ffmpeg.org
 '@ | Set-Content -Path "$stageDir\LICENSES.txt" -Encoding UTF8
 
 Compress-Archive -Path "$stageDir\*" -DestinationPath $zip -CompressionLevel Optimal

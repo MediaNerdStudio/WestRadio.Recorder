@@ -9,3 +9,4 @@ Development/
 *.wav
 *.mp3
 dist/
+tools/

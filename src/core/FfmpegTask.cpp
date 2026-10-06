@@ -1,4 +1,6 @@
 #include "FfmpegTask.h"
+#include <QCoreApplication>
+#include <QDir>
 #include <QProcess>
 #include <QStandardPaths>
 #include <QFileInfo>
@@ -8,15 +10,31 @@ FfmpegTask::ProgressCallback FfmpegTask::progressCallback_;
 
 QString FfmpegTask::ffmpegPath()
 {
+    static QString cached;
+    if (!cached.isEmpty())
+        return cached;
+
+    QString appDir = QCoreApplication::applicationDirPath();
+    const QStringList candidates = {
+        appDir + QStringLiteral("/ffmpeg/ffmpeg.exe"),
+        appDir + QStringLiteral("/ffmpeg.exe")
+    };
+    for (const QString &p : candidates) {
+        if (QFileInfo::exists(p)) {
+            cached = QDir::toNativeSeparators(p);
+            return cached;
+        }
+    }
+
     QString path = QStandardPaths::findExecutable(QStringLiteral("ffmpeg"));
+    if (path.isEmpty()) {
+        const QString fallback = QStringLiteral("C:\\ffmpeg\\bin\\ffmpeg.exe");
+        if (QFileInfo::exists(fallback))
+            path = fallback;
+    }
     if (!path.isEmpty())
-        return path;
-
-    const QString fallback = QStringLiteral("C:\\ffmpeg\\bin\\ffmpeg.exe");
-    if (QFileInfo::exists(fallback))
-        return fallback;
-
-    return QString();
+        cached = path;
+    return cached;
 }
 
 bool FfmpegTask::available()
