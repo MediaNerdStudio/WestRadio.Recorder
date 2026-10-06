@@ -104,3 +104,26 @@ FFmpeg
 
 Compress-Archive -Path "$stageDir\*" -DestinationPath $zip -CompressionLevel Optimal
 Write-Host "Wrote $zip"
+
+# Inno Setup installer (optional; skipped if ISCC.exe is not found).
+$iscc = if ($env:ISCC) { $env:ISCC } else { $null }
+if (-not $iscc -or -not (Test-Path $iscc)) {
+    $candidates = @(
+        "$env:LOCALAPPDATA\Programs\Inno Setup 6\ISCC.exe",
+        'C:\Program Files (x86)\Inno Setup 6\ISCC.exe',
+        'C:\Program Files\Inno Setup 6\ISCC.exe'
+    )
+    $iscc = $candidates | Where-Object { Test-Path $_ } | Select-Object -First 1
+    if (-not $iscc) {
+        $cmd = Get-Command ISCC.exe -ErrorAction SilentlyContinue
+        if ($cmd) { $iscc = $cmd.Source }
+    }
+}
+$iss = "$root\installer\WestRadio.Recorder.iss"
+if ($iscc -and (Test-Path $iss)) {
+    Write-Host "Building installer with $iscc"
+    & $iscc "/DAppVersion=$version" /Qp $iss
+    if ($LASTEXITCODE -ne 0) { throw "ISCC failed ($LASTEXITCODE)" }
+} else {
+    Write-Warning "Inno Setup (ISCC.exe) not found; skipping installer build"
+}

@@ -5,9 +5,7 @@ build-msvc/
 .vs/
 CMakeLists.txt.user
 
-Development/*.wav
-Development/*.mp3
-Development/*.png
+Development/
 *.wav
 *.mp3
 dist/
